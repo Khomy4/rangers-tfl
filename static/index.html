@@ -120,7 +120,7 @@ input,select,option{font-family:inherit;outline:none}
 .rv-btns{display:flex;gap:4px;flex-shrink:0}
 
 /* Player position row */
-.pl-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #1e1e1e}
+.pl-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #1e1e1e}
 .pl-row:last-child{border:none}
 .pl-name{flex:1;font-size:14px;font-weight:600}
 
@@ -332,19 +332,16 @@ async function renderDetail(mid) {
     const dateStr = dt.toLocaleDateString("ru-RU",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
     const timeStr = dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
 
-    // RSVP counts
     const yes = m.rsvp_list.filter(r=>r.status==="yes");
     const no = m.rsvp_list.filter(r=>r.status==="no");
     const pending = m.rsvp_list.filter(r=>!r.status);
 
-    // Voting eligibility
     const myStats = m.stats.find(s=>s.player_id===S.me.player.id);
     const myPlayed = myStats?.played === 1;
     const canVote = scored && myPlayed && !m.voting_closed;
     const playedPlayers = m.stats.filter(s=>s.played && s.player_id!==S.me.player.id);
     const voteOpts = playedPlayers.map(p=>`<option value="${p.player_id}">${esc(p.name)}</option>`).join("");
 
-    // Score color
     let scoreCls = "";
     if (scored) scoreCls = m.gf>m.ga?"win":m.gf<m.ga?"loss":"draw";
 
@@ -354,7 +351,6 @@ async function renderDetail(mid) {
   <div class="det-title">vs ${esc(m.opponent)}</div>
 </div>
 
-<!-- Score card -->
 <div class="card" style="text-align:center;padding:16px">
   <div style="font-size:12px;color:#666;margin-bottom:6px">${dateStr}, ${timeStr}</div>
   ${scored ? `
@@ -367,7 +363,6 @@ async function renderDetail(mid) {
   ${dlBar(m)}
 </div>
 
-<!-- RSVP -->
 <div class="sect">Состав</div>
 <div class="card">
   <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
@@ -389,7 +384,6 @@ async function renderDetail(mid) {
 </div>
 
 ${scored && m.stats.length ? `
-<!-- Stats -->
 <div class="sect">Статистика матча</div>
 <div class="card">
   ${m.stats.filter(s=>s.played).sort((a,b)=>b.points-a.points).map(s=>`
@@ -410,7 +404,6 @@ ${scored && m.stats.length ? `
 ` : ""}
 
 ${canVote ? `
-<!-- Vote -->
 <div class="sect">Голосование</div>
 <div class="card">
   <div style="font-size:12px;color:#666;margin-bottom:10px">За себя голосовать нельзя. Можно переголосовать.</div>
@@ -496,11 +489,18 @@ function renderBank() {
 async function renderCaptain() {
   const el = document.getElementById("pg-captain");
   const mOpts = S.matches.map(m=>`<option value="${m.id}">vs ${esc(m.opponent)} · ${new Date(m.match_date).toLocaleDateString("ru-RU")}</option>`).join("");
+  // S.players excludes Босс — correct for stats selectors
   const pOpts = S.players.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
 
-  // Load pending players
-  let pending = [];
-  try { pending = await api("/api/captain/pending"); } catch(e) {}
+  // Load pending + ALL approved players (including Босс) for management panel
+  let pending = [], allPlayers = [];
+  try {
+    [pending, allPlayers] = await Promise.all([
+      api("/api/captain/pending"),
+      api("/api/captain/all_players"),
+    ]);
+  } catch(e) {}
+
   const pendingHtml = pending.length ? `
 <div class="sect">⚠️ Заявки на вступление (${pending.length})</div>
 ${pending.map(pl=>`
@@ -524,6 +524,22 @@ ${pending.map(pl=>`
   <label class="form-lbl">Дедлайн подтверждения</label>
   <input class="form-in" id="mdl" type="datetime-local">
   <button class="btn-primary" onclick="createMatch()">Создать матч</button>
+</div>
+
+<div class="sect">Редактировать / удалить матч</div>
+<div class="card">
+  <label class="form-lbl">Матч</label>
+  <select class="form-sel" id="edm" onchange="loadEditMatch()">${mOpts}</select>
+  <label class="form-lbl">Соперник</label>
+  <input class="form-in" id="edopp" placeholder="Название команды">
+  <label class="form-lbl">Дата и время</label>
+  <input class="form-in" id="edmdt" type="datetime-local">
+  <label class="form-lbl">Дедлайн подтверждения</label>
+  <input class="form-in" id="edmdl" type="datetime-local">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <button class="btn-primary" onclick="saveEditMatch()">💾 Сохранить</button>
+    <button class="btn-danger" onclick="deleteMatch()">🗑 Удалить</button>
+  </div>
 </div>
 
 <div class="sect">Внести счёт</div>
@@ -570,11 +586,14 @@ ${pending.map(pl=>`
 
 <div class="sect">Игроки команды</div>
 <div class="card" id="playersCard">
-  ${S.players.map(p=>`
+  ${allPlayers.map(p=>`
     <div class="pl-row" id="plrow-${p.id}">
       <div style="flex:1;min-width:0">
-        <div class="pl-name">${esc(p.name)}</div>
-        <div id="rename-${p.id}" style="display:none;margin-top:4px;display:none">
+        <div class="pl-name">
+          ${esc(p.name)}
+          ${p.position==="Босс"?` <span class="chip chip-gold" style="font-size:10px;padding:2px 6px;vertical-align:middle">👑 скрыт</span>`:""}
+        </div>
+        <div id="rename-${p.id}" style="display:none;margin-top:4px">
           <input class="form-in" id="rname-${p.id}" style="margin:0;padding:7px 10px;font-size:13px" value="${esc(p.name)}" placeholder="Реальное имя">
           <button class="btn-primary btn-sm" style="margin-top:4px;width:auto;padding:6px 14px" onclick="renamePl(${p.id})">Сохранить</button>
         </div>
@@ -587,10 +606,14 @@ ${pending.map(pl=>`
           <option ${p.position==="Защитник"?"selected":""} value="Защитник">🛡 Защитник</option>
           <option ${p.position==="Нападающий"?"selected":""} value="Нападающий">⚡ Нападающий</option>
           <option ${p.position==="Универсал"?"selected":""} value="Универсал">🔄 Универсал</option>
+          <option ${p.position==="Босс"?"selected":""} value="Босс">👑 Босс</option>
         </select>
       </div>
     </div>
   `).join("")}
+</div>
+<div class="card-sm" style="font-size:11px;color:#555;line-height:1.6;text-align:center">
+  👑 «Босс» — игрок скрыт от всей командной статистики
 </div>
 
 <div class="sect">Новый сезон</div>
@@ -600,6 +623,48 @@ ${pending.map(pl=>`
   <button class="btn-ghost" onclick="newSeason()">Начать новый сезон</button>
 </div>
 `;
+  if (S.matches.length) loadEditMatch();
+}
+
+function loadEditMatch() {
+  const mid = +document.getElementById("edm")?.value;
+  const m = S.matches.find(x => x.id === mid);
+  if (!m) return;
+  document.getElementById("edopp").value = m.opponent || "";
+  const toLocal = s => s ? s.substring(0,16) : "";
+  document.getElementById("edmdt").value = toLocal(m.match_date);
+  document.getElementById("edmdl").value = toLocal(m.rsvp_deadline || "");
+}
+
+async function saveEditMatch() {
+  const mid = +document.getElementById("edm").value;
+  const opp = document.getElementById("edopp").value.trim();
+  const mdt = document.getElementById("edmdt").value;
+  const mdl = document.getElementById("edmdl").value;
+  if (!opp || !mdt) { toast("Укажи соперника и дату"); return; }
+  try {
+    await api(`/api/matches/${mid}`, {method:"PUT", body:JSON.stringify({opponent:opp, match_date:mdt, rsvp_deadline:mdl||null})});
+    toast("✅ Матч обновлён");
+    S.matches = await api("/api/matches");
+    renderMatches(); renderCaptain();
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+function deleteMatch() {
+  const mid = +document.getElementById("edm").value;
+  const m = S.matches.find(x => x.id === mid);
+  if (!m) return;
+  const doDelete = async () => {
+    try {
+      await api(`/api/matches/${mid}`, {method:"DELETE"});
+      toast("🗑 Матч удалён");
+      S.matches = await api("/api/matches");
+      renderMatches(); renderCaptain(); loadBank();
+    } catch(e) { toast("❌ "+e.message); }
+  };
+  if (tg) {
+    tg.showConfirm(`Удалить матч vs ${m.opponent}? Все данные (RSVP, статистика, голоса) будут удалены.`, ok => { if (ok) doDelete(); });
+  } else if (confirm(`Удалить матч vs ${m.opponent}?`)) { doDelete(); }
 }
 
 async function createMatch() {
@@ -688,7 +753,6 @@ async function approvePl(pid) {
 }
 
 async function rejectPl(pid) {
-  // For now just hide — future: delete from DB
   document.getElementById(`pend-${pid}`)?.remove();
   toast("Игрок отклонён");
 }
@@ -698,6 +762,7 @@ async function setPos(pid, pos) {
     await api(`/api/players/${pid}/position`,{method:"PUT",body:JSON.stringify({position:pos})});
     toast("✅ Позиция обновлена");
     S.players = await api("/api/players");
+    renderCaptain(); // Re-render so Босс badge appears/disappears immediately
   } catch(e) { toast("❌ "+e.message); }
 }
 
