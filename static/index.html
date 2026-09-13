@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Rangers TFL</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d0d0d;color:#f0f0f0;min-height:100vh;padding-bottom:76px}
+button{cursor:pointer;font-family:inherit;border:none;outline:none}
+input,select,option{font-family:inherit;outline:none}
+
+/* Header */
+.hdr{padding:18px 16px 14px;background:#111;border-bottom:1px solid #1e1e1e}
+.hdr-row{display:flex;align-items:center;justify-content:space-between}
+.hdr-title{font-size:22px;font-weight:900;letter-spacing:-.5px}
+.hdr-badge{font-size:11px;font-weight:700;background:#1d4ed8;color:#fff;padding:3px 9px;border-radius:20px}
+.hdr-sub{font-size:12px;color:#666;margin-top:3px}
+
+/* Bottom Nav */
+.nav{position:fixed;bottom:0;left:0;right:0;display:grid;grid-template-columns:repeat(4,1fr);background:#111;border-top:1px solid #1e1e1e;z-index:100;padding-bottom:env(safe-area-inset-bottom,0px)}
+.nav-btn{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 4px 8px;font-size:10px;font-weight:600;color:#555;background:none;transition:.12s color}
+.nav-btn.on{color:#3b82f6}
+.nav-icon{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* Pages */
+.pg{display:none;padding:12px 14px 4px}
+.pg.on{display:block}
+
+/* Cards */
+.card{background:#1a1a1a;border-radius:16px;padding:14px 16px;margin-bottom:10px;border:1px solid #222}
+.card-sm{background:#1a1a1a;border-radius:12px;padding:10px 14px;margin-bottom:8px;border:1px solid #222}
+
+/* Match card */
+.mc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.mc-opp{font-size:17px;font-weight:700}
+.mc-date{font-size:12px;color:#777;margin-top:3px}
+.mc-score{font-size:30px;font-weight:900;flex-shrink:0;line-height:1}
+.win{color:#22c55e}.loss{color:#ef4444}.draw{color:#f59e0b}
+.mc-bonus{font-size:12px;color:#777;margin:7px 0 0}
+.mc-bonus b{color:#22c55e}
+
+/* Deadline bar */
+.dl-bar{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:7px 10px;border-radius:9px;margin:9px 0 0}
+.dl-ok{background:#1c2a0f;color:#86efac}
+.dl-warn{background:#2a1f00;color:#fbbf24}
+.dl-gone{background:#2a0808;color:#f87171}
+
+/* RSVP buttons */
+.rsvp-row{display:flex;gap:8px;margin-top:10px}
+.btn-yes{background:#14532d;color:#4ade80;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:700;flex:1}
+.btn-yes.on,.btn-yes:active{background:#16a34a;color:#fff}
+.btn-no{background:#450a0a;color:#f87171;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:700;flex:1}
+.btn-no.on,.btn-no:active{background:#dc2626;color:#fff}
+.btn-primary{background:#1d4ed8;color:#fff;border-radius:10px;padding:11px;font-size:14px;font-weight:700;width:100%;text-align:center;display:block}
+.btn-primary:active{background:#1e40af}
+.btn-ghost{background:#1e1e1e;color:#aaa;border-radius:10px;padding:11px;font-size:14px;font-weight:700;width:100%;text-align:center;display:block;border:1px solid #2e2e2e}
+.btn-danger{background:#450a0a;color:#f87171;border-radius:10px;padding:11px;font-size:14px;font-weight:700;width:100%;text-align:center;display:block}
+.btn-sm{padding:6px 12px;font-size:12px;font-weight:700;border-radius:8px}
+
+/* Section label */
+.sect{font-size:11px;font-weight:700;color:#555;letter-spacing:.6px;text-transform:uppercase;margin:14px 0 8px}
+
+/* Status chips */
+.chip{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px}
+.chip-yes{background:#14532d;color:#4ade80}
+.chip-no{background:#450a0a;color:#f87171}
+.chip-pending{background:#1e1e1e;color:#666}
+.chip-gold{background:#422006;color:#fbbf24}
+.chip-blue{background:#1e3658;color:#60a5fa}
+.chip-green{background:#14532d;color:#4ade80}
+.chip-gray{background:#1e1e1e;color:#888}
+
+/* Leaderboard */
+.lb-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #1e1e1e}
+.lb-row:last-child{border:none}
+.lb-rank{font-size:15px;font-weight:900;color:#555;width:26px;text-align:center;flex-shrink:0}
+.lb-info{flex:1;min-width:0}
+.lb-info b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.lb-detail{font-size:11px;color:#666;margin-top:1px}
+.lb-pts{font-size:22px;font-weight:900;color:#3b82f6;flex-shrink:0}
+
+/* Bank */
+.bank-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.bank-cell{background:#1a1a1a;border-radius:14px;padding:14px;border:1px solid #222}
+.bank-val{font-size:22px;font-weight:900;margin-top:4px}
+.bank-lbl{font-size:11px;color:#777;font-weight:600}
+
+/* Form */
+.form-lbl{font-size:12px;color:#777;font-weight:600;margin-bottom:4px;display:block}
+.form-in{background:#111;border:1px solid #2e2e2e;color:#f0f0f0;border-radius:10px;padding:11px 13px;font-size:15px;width:100%;margin-bottom:12px}
+.form-in:focus{border-color:#3b82f6}
+.form-sel{background:#111;border:1px solid #2e2e2e;color:#f0f0f0;border-radius:10px;padding:11px 13px;font-size:15px;width:100%;margin-bottom:12px;-webkit-appearance:none}
+
+/* Detail page */
+.det-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.back-btn{background:#1a1a1a;border:1px solid #222;border-radius:10px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.back-icon{width:18px;height:18px;stroke:#f0f0f0;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.det-title{font-size:18px;font-weight:800}
+.det-score{font-size:52px;font-weight:900;text-align:center;padding:18px 0 4px;line-height:1}
+.det-teams{display:flex;justify-content:space-between;font-size:12px;color:#666;padding:0 2px;margin-bottom:12px}
+
+/* Stat row */
+.st-row{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid #1e1e1e}
+.st-row:last-child{border:none}
+.st-name{flex:1;min-width:0}
+.st-name b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.st-name span{font-size:11px;color:#666}
+.st-chips{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.st-pts{font-size:16px;font-weight:900;color:#3b82f6;flex-shrink:0;min-width:22px;text-align:right}
+
+/* RSVP player row */
+.rv-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1e1e1e}
+.rv-row:last-child{border:none}
+.rv-icon{font-size:15px;flex-shrink:0;width:20px;text-align:center}
+.rv-name{flex:1;font-size:14px}
+.rv-pos{font-size:11px;color:#666;margin-left:4px}
+.rv-late{font-size:10px;color:#f59e0b;flex-shrink:0}
+.rv-btns{display:flex;gap:4px;flex-shrink:0}
+
+/* Player position row */
+.pl-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #1e1e1e}
+.pl-row:last-child{border:none}
+.pl-name{flex:1;font-size:14px;font-weight:600}
+
+/* Empty / loading */
+.empty{text-align:center;padding:48px 20px;color:#444}
+.empty-ic{font-size:44px;margin-bottom:10px}
+.empty-tx{font-size:14px}
+.loading{text-align:center;padding:40px;color:#444;font-size:14px}
+
+/* Toast */
+.toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:#1d4ed8;color:#fff;padding:9px 18px;border-radius:20px;font-size:13px;font-weight:700;z-index:999;opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap;max-width:90vw;text-align:center}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-row">
+    <span class="hdr-title">🏆 Rangers</span>
+    <span class="hdr-badge" id="seasonBadge">Сезон 1</span>
+  </div>
+  <div class="hdr-sub" id="hdrSub">Загрузка...</div>
+</div>
+
+<nav class="nav">
+  <button class="nav-btn on" onclick="goPage('matches')">
+    <svg class="nav-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+    Матчи
+  </button>
+  <button class="nav-btn" onclick="goPage('rating')">
+    <svg class="nav-icon" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Рейтинг
+  </button>
+  <button class="nav-btn" onclick="goPage('bank')">
+    <svg class="nav-icon" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+    Банк
+  </button>
+  <button class="nav-btn" id="capNavBtn" onclick="goPage('captain')" style="display:none">
+    <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+    Капитан
+  </button>
+</nav>
+
+<div id="pg-matches" class="pg on"></div>
+<div id="pg-detail" class="pg"></div>
+<div id="pg-rating" class="pg"></div>
+<div id="pg-bank" class="pg"></div>
+<div id="pg-captain" class="pg"></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const initData = tg?.initData || "";
+const H = {"Content-Type":"application/json","X-Telegram-Init-Data":initData};
+
+let S = { me:null, matches:[], players:[], seasons:[], lb:[], summary:null };
+let activePage = "matches";
+let prevPage = "matches";
+let detailMatchId = null;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const rub = n => new Intl.NumberFormat("ru-RU").format(n) + " ₽";
+const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+function toast(msg, ms=2600) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.classList.add("on");
+  setTimeout(() => el.classList.remove("on"), ms);
+}
+
+async function api(url, opts={}) {
+  const r = await fetch(url, {...opts, headers:{...H,...(opts.headers||{})}});
+  if (!r.ok) throw new Error(await r.text() || String(r.status));
+  return r.json();
+}
+
+function goPage(page) {
+  document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("on"));
+  document.querySelector(`.nav-btn[onclick="goPage('${page}')"]`)?.classList.add("on");
+  document.querySelectorAll(".pg").forEach(p => p.classList.remove("on"));
+  document.getElementById(`pg-${page}`)?.classList.add("on");
+  activePage = page;
+}
+
+function openDetail(mid) {
+  prevPage = activePage;
+  document.querySelectorAll(".nav-btn,.pg").forEach(x => x.classList.remove("on"));
+  document.getElementById("pg-detail").classList.add("on");
+  activePage = "detail";
+  detailMatchId = mid;
+  renderDetail(mid);
+}
+
+function back() { goPage(prevPage); }
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+async function boot() {
+  try {
+    [S.me, S.players, S.matches, S.seasons] = await Promise.all([
+      api("/api/me"), api("/api/players"), api("/api/matches"), api("/api/seasons")
+    ]);
+    const s = S.seasons.find(x => x.active) || S.seasons[0];
+    if (s) document.getElementById("seasonBadge").textContent = s.name;
+    document.getElementById("hdrSub").textContent =
+      S.me.player.name + (S.me.captain ? " · капитан" : "");
+    if (S.me.captain) document.getElementById("capNavBtn").style.display = "";
+    renderMatches();
+    loadRating();
+    loadBank();
+    if (S.me.captain) renderCaptain();
+  } catch(e) {
+    document.getElementById("pg-matches").innerHTML =
+      `<div class="empty"><div class="empty-ic">⚠️</div><div class="empty-tx">${esc(e.message)}</div></div>`;
+  }
+}
+
+// ── MATCHES ───────────────────────────────────────────────────────────────────
+function dlBar(m) {
+  if (!m.rsvp_deadline) return "";
+  const dl = new Date(m.rsvp_deadline), now = new Date();
+  const passed = m.deadline_passed;
+  const diff = dl - now;
+  let cls, ico, txt;
+  if (passed) {
+    cls="dl-gone"; ico="🔒"; txt="Дедлайн истёк — обратись к капитану";
+  } else {
+    const h = Math.floor(diff/3600000), mn = Math.floor((diff%3600000)/60000);
+    if (h > 48) { cls="dl-ok"; ico="📅"; txt=`Ответить до ${dl.toLocaleDateString("ru-RU",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}`; }
+    else if (h > 0) { cls="dl-warn"; ico="⏰"; txt=`Осталось ${h}ч ${mn}м`; }
+    else { cls="dl-warn"; ico="⚡"; txt=`Осталось ${mn} мин!`; }
+  }
+  return `<div class="dl-bar ${cls}">${ico} ${txt}</div>`;
+}
+
+function renderMatches() {
+  const el = document.getElementById("pg-matches");
+  if (!S.matches.length) {
+    el.innerHTML=`<div class="empty"><div class="empty-ic">⚽</div><div class="empty-tx">Матчей пока нет</div></div>`;
+    return;
+  }
+  el.innerHTML = S.matches.map(m => {
+    const scored = m.gf !== null;
+    const dt = new Date(m.match_date);
+    const dateStr = dt.toLocaleDateString("ru-RU",{weekday:"short",day:"numeric",month:"long"});
+    const timeStr = dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
+    let scoreCls = "";
+    if (scored) scoreCls = m.gf>m.ga?"win":m.gf<m.ga?"loss":"draw";
+    const scoreHtml = scored
+      ? `<span class="mc-score ${scoreCls}">${m.gf}:${m.ga}</span>`
+      : `<span class="mc-score" style="color:#444">—</span>`;
+    const bonusHtml = scored
+      ? `<div class="mc-bonus">Бонус команды: <b>${rub(m.finance.team_bank)}</b></div>` : "";
+    const rsvpHtml = !scored && !m.deadline_passed
+      ? `<div class="rsvp-row" onclick="event.stopPropagation()">
+           <button class="btn-yes btn-sm" onclick="doRsvp(${m.id},'yes')">✅ Играю</button>
+           <button class="btn-no btn-sm" onclick="doRsvp(${m.id},'no')">❌ Не играю</button>
+         </div>` : "";
+    return `
+<div class="card" onclick="openDetail(${m.id})" style="cursor:pointer">
+  <div class="mc-top">
+    <div style="min-width:0">
+      <div class="mc-opp">vs ${esc(m.opponent)}</div>
+      <div class="mc-date">${dateStr}, ${timeStr}</div>
+    </div>
+    ${scoreHtml}
+  </div>
+  ${bonusHtml}
+  ${dlBar(m)}
+  ${rsvpHtml}
+  ${scored ? `<div style="font-size:11px;color:#444;margin-top:8px">Нажми чтобы открыть статистику →</div>` : ""}
+</div>`;
+  }).join("");
+}
+
+async function doRsvp(mid, status, pid=null) {
+  try {
+    const body = {status};
+    if (pid) body.player_id = pid;
+    await api(`/api/matches/${mid}/rsvp`,{method:"POST",body:JSON.stringify(body)});
+    toast(status==="yes" ? "✅ В составе!" : "❌ Пропуск записан");
+    S.matches = await api("/api/matches");
+    renderMatches();
+    if (activePage === "detail" && detailMatchId === mid) renderDetail(mid);
+  } catch(e) { toast("❌ " + e.message); }
+}
+
+// ── MATCH DETAIL ──────────────────────────────────────────────────────────────
+async function renderDetail(mid) {
+  const el = document.getElementById("pg-detail");
+  el.innerHTML = `<div class="loading">Загрузка...</div>`;
+  try {
+    const m = await api(`/api/matches/${mid}`);
+    const scored = m.gf !== null;
+    const dt = new Date(m.match_date);
+    const dateStr = dt.toLocaleDateString("ru-RU",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+    const timeStr = dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
+
+    // RSVP counts
+    const yes = m.rsvp_list.filter(r=>r.status==="yes");
+    const no = m.rsvp_list.filter(r=>r.status==="no");
+    const pending = m.rsvp_list.filter(r=>!r.status);
+
+    // Voting eligibility
+    const myStats = m.stats.find(s=>s.player_id===S.me.player.id);
+    const myPlayed = myStats?.played === 1;
+    const canVote = scored && myPlayed && !m.voting_closed;
+    const playedPlayers = m.stats.filter(s=>s.played && s.player_id!==S.me.player.id);
+    const voteOpts = playedPlayers.map(p=>`<option value="${p.player_id}">${esc(p.name)}</option>`).join("");
+
+    // Score color
+    let scoreCls = "";
+    if (scored) scoreCls = m.gf>m.ga?"win":m.gf<m.ga?"loss":"draw";
+
+    el.innerHTML = `
+<div class="det-header">
+  <button class="back-btn" onclick="back()"><svg class="back-icon" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
+  <div class="det-title">vs ${esc(m.opponent)}</div>
+</div>
+
+<!-- Score card -->
+<div class="card" style="text-align:center;padding:16px">
+  <div style="font-size:12px;color:#666;margin-bottom:6px">${dateStr}, ${timeStr}</div>
+  ${scored ? `
+    <div class="det-score ${scoreCls}">${m.gf} : ${m.ga}</div>
+    <div class="det-teams"><span>Rangers</span><span>${esc(m.opponent)}</span></div>
+    <div style="font-size:12px;color:#777">Бонус команды: <b style="color:#22c55e">${rub(m.finance.team_bank)}</b>
+      <span style="margin-left:6px;color:#555">(дисц. ${rub(m.finance.discipline)} + рез. ${rub(m.finance.result)})</span>
+    </div>
+  ` : `<div style="font-size:32px;font-weight:900;color:#333;padding:14px 0">—</div>`}
+  ${dlBar(m)}
+</div>
+
+<!-- RSVP -->
+<div class="sect">Состав</div>
+<div class="card">
+  <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+    <span class="chip chip-yes">✅ ${yes.length}</span>
+    <span class="chip chip-no">❌ ${no.length}</span>
+    <span class="chip chip-pending">❓ ${pending.length}</span>
+  </div>
+  ${m.rsvp_list.map(r=>`
+    <div class="rv-row">
+      <span class="rv-icon">${r.status==="yes"?"✅":r.status==="no"?"❌":"❓"}</span>
+      <span class="rv-name">${esc(r.name)}<span class="rv-pos">${esc(r.position)}</span></span>
+      ${!r.on_time&&r.status?`<span class="rv-late">⚠ поздно</span>`:""}
+      ${S.me.captain?`<div class="rv-btns">
+        <button class="btn-yes btn-sm" onclick="doRsvp(${mid},'yes',${r.player_id})">✅</button>
+        <button class="btn-no btn-sm" onclick="doRsvp(${mid},'no',${r.player_id})">❌</button>
+      </div>`:""}
+    </div>
+  `).join("")}
+</div>
+
+${scored && m.stats.length ? `
+<!-- Stats -->
+<div class="sect">Статистика матча</div>
+<div class="card">
+  ${m.stats.filter(s=>s.played).sort((a,b)=>b.points-a.points).map(s=>`
+    <div class="st-row">
+      <div class="st-name"><b>${esc(s.name)}</b><span>${esc(s.position)}</span></div>
+      <div class="st-chips">
+        ${s.goals>0?`<span class="chip chip-green">⚽${s.goals}</span>`:""}
+        ${s.assists>0?`<span class="chip chip-blue">🎯${s.assists}</span>`:""}
+        ${s.keeper_points===3?`<span class="chip chip-gray">🧤сухарь</span>`:""}
+        ${s.keeper_points===1?`<span class="chip chip-gray">🧤+1</span>`:""}
+        ${s.is_mvp?`<span class="chip chip-gold">⭐MVP</span>`:""}
+        ${s.is_best_defense?`<span class="chip chip-gold">🛡защита</span>`:""}
+      </div>
+      <div class="st-pts">${s.points}</div>
+    </div>
+  `).join("")}
+</div>
+` : ""}
+
+${canVote ? `
+<!-- Vote -->
+<div class="sect">Голосование</div>
+<div class="card">
+  <div style="font-size:12px;color:#666;margin-bottom:10px">За себя голосовать нельзя. Можно переголосовать.</div>
+  <label class="form-lbl">⭐ MVP матча</label>
+  <select class="form-sel" id="mvpSel"><option value="">Выбери игрока...</option>${voteOpts}</select>
+  <button class="btn-primary" style="margin-bottom:14px" onclick="doVote(${mid},'mvp','mvpSel')">Проголосовать за MVP</button>
+  <label class="form-lbl">🛡 Лучший в защите</label>
+  <select class="form-sel" id="defSel"><option value="">Выбери игрока...</option>${voteOpts}</select>
+  <button class="btn-primary" onclick="doVote(${mid},'defense','defSel')">Проголосовать за защиту</button>
+  ${m.my_votes?.mvp||m.my_votes?.defense?`<div style="font-size:11px;color:#666;margin-top:10px;text-align:center">Ты уже проголосовал — можно изменить</div>`:""}
+</div>
+` : scored && m.voting_closed ? `<div class="card-sm" style="font-size:13px;color:#666;text-align:center">🔒 Голосование закрыто</div>` : ""}
+`;
+  } catch(e) {
+    el.innerHTML=`<div class="empty"><div class="empty-ic">⚠️</div><div class="empty-tx">${esc(e.message)}</div></div>`;
+  }
+}
+
+async function doVote(mid, vtype, selId) {
+  const target_id = +document.getElementById(selId).value;
+  if (!target_id) { toast("Выбери игрока"); return; }
+  try {
+    await api(`/api/matches/${mid}/vote`,{method:"POST",body:JSON.stringify({vtype,target_id})});
+    toast("✅ Голос принят");
+    renderDetail(mid);
+  } catch(e) { toast("❌ " + e.message); }
+}
+
+// ── RATING ────────────────────────────────────────────────────────────────────
+async function loadRating() {
+  try {
+    S.lb = await api("/api/leaderboard");
+    renderRating();
+  } catch(e) {}
+}
+
+function renderRating() {
+  const el = document.getElementById("pg-rating");
+  if (!S.lb.length) { el.innerHTML=`<div class="empty"><div class="empty-ic">📊</div><div class="empty-tx">Нет данных</div></div>`; return; }
+  const medals = ["🥇","🥈","🥉"];
+  el.innerHTML = `<div class="sect">Рейтинг сезона</div><div class="card">${S.lb.map(r=>`
+    <div class="lb-row">
+      <div class="lb-rank">${r.rank<=3?medals[r.rank-1]:r.rank}</div>
+      <div class="lb-info">
+        <b>${esc(r.name)}</b>
+        <div class="lb-detail">${esc(r.position)||"—"} · ${r.games} игр · ⚽${r.goals} 🎯${r.assists} ⭐${r.mvp} 🛡${r.defense}</div>
+      </div>
+      <div class="lb-pts">${r.points}</div>
+    </div>
+  `).join("")}</div>`;
+}
+
+// ── BANK ──────────────────────────────────────────────────────────────────────
+async function loadBank() {
+  try {
+    S.summary = await api("/api/summary");
+    renderBank();
+  } catch(e) {}
+}
+
+function renderBank() {
+  const s = S.summary;
+  if (!s) return;
+  const el = document.getElementById("pg-bank");
+  el.innerHTML = `
+<div class="sect">Прогресс сезона</div>
+<div class="bank-grid">
+  <div class="bank-cell"><div class="bank-lbl">Сыграно</div><div class="bank-val" style="color:#fff">${s.played} из 5</div></div>
+  <div class="bank-cell"><div class="bank-lbl">До финала</div><div class="bank-val" style="color:#f59e0b">${Math.max(0,5-s.played)}</div></div>
+</div>
+<div class="sect">Заработали вместе</div>
+<div class="bank-grid">
+  <div class="bank-cell"><div class="bank-lbl">Командный банк</div><div class="bank-val" style="color:#22c55e">${rub(s.team_bank)}</div></div>
+  <div class="bank-cell"><div class="bank-lbl">Личный фонд</div><div class="bank-val" style="color:#3b82f6">${rub(s.personal_fund)}</div></div>
+</div>
+<div class="card-sm" style="font-size:12px;color:#555;text-align:center;line-height:1.6">
+  Командный банк тратится вместе после турнира<br>
+  Личный фонд распределяется по итогам рейтинга
+</div>`;
+}
+
+// ── CAPTAIN ───────────────────────────────────────────────────────────────────
+function renderCaptain() {
+  const el = document.getElementById("pg-captain");
+  const mOpts = S.matches.map(m=>`<option value="${m.id}">vs ${esc(m.opponent)} · ${new Date(m.match_date).toLocaleDateString("ru-RU")}</option>`).join("");
+  const pOpts = S.players.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
+
+  el.innerHTML = `
+<div class="sect">Новый матч</div>
+<div class="card">
+  <label class="form-lbl">Соперник</label>
+  <input class="form-in" id="opp" placeholder="Название команды">
+  <label class="form-lbl">Дата и время</label>
+  <input class="form-in" id="mdt" type="datetime-local">
+  <label class="form-lbl">Дедлайн подтверждения</label>
+  <input class="form-in" id="mdl" type="datetime-local">
+  <button class="btn-primary" onclick="createMatch()">Создать матч</button>
+</div>
+
+<div class="sect">Внести счёт</div>
+<div class="card">
+  <label class="form-lbl">Матч</label>
+  <select class="form-sel" id="scm">${mOpts}</select>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div><label class="form-lbl">Мы</label><input class="form-in" id="gf" type="number" min="0" value="0"></div>
+    <div><label class="form-lbl">Они</label><input class="form-in" id="ga" type="number" min="0" value="0"></div>
+  </div>
+  <button class="btn-primary" onclick="saveScore()">Сохранить счёт</button>
+</div>
+
+<div class="sect">Статистика игрока</div>
+<div class="card">
+  <label class="form-lbl">Матч</label>
+  <select class="form-sel" id="stm">${mOpts}</select>
+  <label class="form-lbl">Игрок</label>
+  <select class="form-sel" id="stpl">${pOpts}</select>
+  <label class="form-lbl">Участвовал?</label>
+  <select class="form-sel" id="stpl2">
+    <option value="1">Да, играл</option>
+    <option value="0">Нет, не играл</option>
+  </select>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div><label class="form-lbl">Голы</label><input class="form-in" id="stgo" type="number" min="0" value="0"></div>
+    <div><label class="form-lbl">Ассисты</label><input class="form-in" id="stas" type="number" min="0" value="0"></div>
+  </div>
+  <label class="form-lbl">Вратарь</label>
+  <select class="form-sel" id="stkp">
+    <option value="0">Не вратарь / 3+ пропущено</option>
+    <option value="1">1–2 пропущено (+1 очко)</option>
+    <option value="3">Сухой матч (+3 очка)</option>
+  </select>
+  <button class="btn-primary" onclick="saveStat()">Сохранить</button>
+</div>
+
+<div class="sect">Закрыть голосование</div>
+<div class="card">
+  <label class="form-lbl">Матч</label>
+  <select class="form-sel" id="clm">${mOpts}</select>
+  <button class="btn-danger" onclick="closeVoting()">Закрыть голосование</button>
+</div>
+
+<div class="sect">Позиции игроков</div>
+<div class="card">
+  ${S.players.map(p=>`
+    <div class="pl-row">
+      <span class="pl-name">${esc(p.name)}</span>
+      <select class="form-sel" style="width:auto;margin:0;padding:7px 10px;font-size:12px" onchange="setPos(${p.id},this.value)">
+        <option ${!p.position?"selected":""} value="">—</option>
+        <option ${p.position==="Вратарь"?"selected":""} value="Вратарь">🧤 Вратарь</option>
+        <option ${p.position==="Защитник"?"selected":""} value="Защитник">🛡 Защитник</option>
+        <option ${p.position==="Нападающий"?"selected":""} value="Нападающий">⚡ Нападающий</option>
+        <option ${p.position==="Универсал"?"selected":""} value="Универсал">🔄 Универсал</option>
+      </select>
+    </div>
+  `).join("")}
+</div>
+
+<div class="sect">Новый сезон</div>
+<div class="card">
+  <label class="form-lbl">Название</label>
+  <input class="form-in" id="snm" placeholder="Сезон 2">
+  <button class="btn-ghost" onclick="newSeason()">Начать новый сезон</button>
+</div>
+`;
+}
+
+async function createMatch() {
+  const opp = document.getElementById("opp").value.trim();
+  const mdt = document.getElementById("mdt").value;
+  const mdl = document.getElementById("mdl").value;
+  if (!opp||!mdt) { toast("Укажи соперника и дату"); return; }
+  try {
+    const s = S.seasons.find(x=>x.active)||S.seasons[0];
+    await api("/api/matches",{method:"POST",body:JSON.stringify({opponent:opp,match_date:mdt,rsvp_deadline:mdl||null,season_id:s?.id||1})});
+    toast("✅ Матч создан");
+    S.matches = await api("/api/matches");
+    renderMatches(); renderCaptain();
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+async function saveScore() {
+  const mid = +document.getElementById("scm").value;
+  const gf = +document.getElementById("gf").value;
+  const ga = +document.getElementById("ga").value;
+  try {
+    await api(`/api/matches/${mid}/score`,{method:"POST",body:JSON.stringify({gf,ga})});
+    toast("✅ Счёт сохранён");
+    S.matches = await api("/api/matches");
+    renderMatches(); loadBank();
+    if (activePage==="detail"&&detailMatchId===mid) renderDetail(mid);
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+async function saveStat() {
+  const mid = +document.getElementById("stm").value;
+  const pid = +document.getElementById("stpl").value;
+  const played = +document.getElementById("stpl2").value;
+  const goals = +document.getElementById("stgo").value;
+  const assists = +document.getElementById("stas").value;
+  const kp = +document.getElementById("stkp").value;
+  try {
+    await api(`/api/matches/${mid}/stats`,{method:"POST",body:JSON.stringify({player_id:pid,played,goals,assists,keeper_points:kp})});
+    toast("✅ Статистика сохранена");
+    await loadRating();
+    if (activePage==="detail"&&detailMatchId===mid) renderDetail(mid);
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+function closeVoting() {
+  const mid = +document.getElementById("clm").value;
+  if (tg) {
+    tg.showConfirm("Закрыть голосование? Игроки больше не смогут голосовать.", async ok => {
+      if (ok) await doClose(mid);
+    });
+  } else { doClose(mid); }
+}
+
+async function doClose(mid) {
+  try {
+    await api(`/api/matches/${mid}/close_voting`,{method:"POST"});
+    toast("🔒 Голосование закрыто");
+    if (activePage==="detail"&&detailMatchId===mid) renderDetail(mid);
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+async function setPos(pid, pos) {
+  try {
+    await api(`/api/players/${pid}/position`,{method:"PUT",body:JSON.stringify({position:pos})});
+    toast("✅ Позиция обновлена");
+    S.players = await api("/api/players");
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+async function newSeason() {
+  const name = document.getElementById("snm").value.trim();
+  if (!name) { toast("Введи название сезона"); return; }
+  if (tg) {
+    tg.showConfirm(`Начать "${name}"? Текущий сезон будет закрыт.`, async ok => {
+      if (ok) await doNewSeason(name);
+    });
+  } else { await doNewSeason(name); }
+}
+
+async function doNewSeason(name) {
+  try {
+    await api("/api/seasons",{method:"POST",body:JSON.stringify({name})});
+    toast("✅ Новый сезон начат");
+    [S.seasons, S.matches] = await Promise.all([api("/api/seasons"), api("/api/matches")]);
+    const s = S.seasons.find(x=>x.active)||S.seasons[0];
+    if (s) document.getElementById("seasonBadge").textContent = s.name;
+    renderMatches(); renderCaptain(); loadRating(); loadBank();
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+boot();
+</script>
+</body>
+</html>
