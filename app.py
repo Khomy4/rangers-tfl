@@ -74,6 +74,14 @@ def init():
             PRIMARY KEY(match_id, voter_id, vtype)
         );
         """)
+        # Migration: add approved column (safe if already exists)
+        try:
+            c.execute("ALTER TABLE players ADD COLUMN approved INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        # Captain is always approved
+        if CAPTAIN_ID:
+            c.execute("UPDATE players SET approved=1 WHERE telegram_id=?", (CAPTAIN_ID,))
         if c.execute("SELECT COUNT(*) n FROM seasons").fetchone()["n"] == 0:
             c.execute("INSERT INTO seasons(id,name,active) VALUES(1,'Сезон 1',1)")
 
@@ -106,7 +114,8 @@ def get_player(request: Request):
             p = c.execute("SELECT * FROM players WHERE id=1").fetchone()
         if not p:
             name = (u.get("first_name","") + " " + u.get("last_name","")).strip() or "Игрок"
-            c.execute("INSERT INTO players(telegram_id,name,position) VALUES(?,?,?)", (uid, name, ""))
+            approved = 1 if uid == CAPTAIN_ID else 0
+            c.execute("INSERT INTO players(telegram_id,name,position,approved) VALUES(?,?,?,?)", (uid, name, "", approved))
             p = c.execute("SELECT * FROM players WHERE telegram_id=?", (uid,)).fetchone()
         return dict(p)
 
@@ -183,6 +192,9 @@ class VoteIn(BaseModel):
 class PositionIn(BaseModel):
     position: str
 
+class PlayerNameIn(BaseModel):
+    name: str
+
 class SeasonIn(BaseModel):
     name: str
 
@@ -201,7 +213,38 @@ def me(request: Request):
 def players(request: Request):
     get_player(request)
     with db() as c:
-        return [dict(r) for r in c.execute("SELECT * FROM players ORDER BY name")]
+        return [dict(r) for r in c.execute("SELECT * FROM players WHERE approved=1 ORDER BY name")]
+
+@app.get("/api/captain/pending")
+def pending_players(request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM players WHERE approved=0 ORDER BY id")]
+
+@app.put("/api/players/{pid}/approve")
+def approve_player(pid: int, x: PlayerNameIn, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        if x.name.strip():
+            c.execute("UPDATE players SET approved=1, name=? WHERE id=?", (x.name.strip(), pid))
+        else:
+            c.execute("UPDATE players SET approved=1 WHERE id=?", (pid,))
+    return {"ok": True}
+
+@app.put("/api/players/{pid}/name")
+def rename_player(pid: int, x: PlayerNameIn, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    if not x.name.strip():
+        raise HTTPException(400, "Пустое имя")
+    with db() as c:
+        c.execute("UPDATE players SET name=? WHERE id=?", (x.name.strip(), pid))
+    return {"ok": True}
 
 @app.put("/api/players/{pid}/position")
 def set_position(pid: int, x: PositionIn, request: Request):

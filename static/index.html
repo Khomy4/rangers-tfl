@@ -228,6 +228,18 @@ async function boot() {
     if (s) document.getElementById("seasonBadge").textContent = s.name;
     document.getElementById("hdrSub").textContent =
       S.me.player.name + (S.me.captain ? " · капитан" : "");
+
+    // Not approved yet — show waiting screen
+    if (!S.me.captain && !S.me.player.approved) {
+      document.getElementById("pg-matches").innerHTML =
+        `<div class="empty" style="padding-top:80px">
+           <div class="empty-ic">⏳</div>
+           <div class="empty-tx" style="font-size:16px;font-weight:700;color:#f0f0f0;margin-bottom:8px">Ожидаем подтверждения</div>
+           <div class="empty-tx" style="color:#666">Капитан должен одобрить твой аккаунт.<br>Как только он это сделает — всё откроется.</div>
+         </div>`;
+      return;
+    }
+
     if (S.me.captain) document.getElementById("capNavBtn").style.display = "";
     renderMatches();
     loadRating();
@@ -481,12 +493,28 @@ function renderBank() {
 }
 
 // ── CAPTAIN ───────────────────────────────────────────────────────────────────
-function renderCaptain() {
+async function renderCaptain() {
   const el = document.getElementById("pg-captain");
   const mOpts = S.matches.map(m=>`<option value="${m.id}">vs ${esc(m.opponent)} · ${new Date(m.match_date).toLocaleDateString("ru-RU")}</option>`).join("");
   const pOpts = S.players.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
 
-  el.innerHTML = `
+  // Load pending players
+  let pending = [];
+  try { pending = await api("/api/captain/pending"); } catch(e) {}
+  const pendingHtml = pending.length ? `
+<div class="sect">⚠️ Заявки на вступление (${pending.length})</div>
+${pending.map(pl=>`
+<div class="card" id="pend-${pl.id}">
+  <div style="font-size:14px;font-weight:700;margin-bottom:8px">@${esc(pl.name)}</div>
+  <label class="form-lbl">Реальное имя игрока</label>
+  <input class="form-in" id="pendname-${pl.id}" placeholder="Имя Фамилия" value="${esc(pl.name)}">
+  <div style="display:flex;gap:8px">
+    <button class="btn-primary btn-sm" style="flex:1;padding:9px" onclick="approvePl(${pl.id})">✅ Принять</button>
+    <button class="btn-danger btn-sm" style="flex:1;padding:9px" onclick="rejectPl(${pl.id})">❌ Отклонить</button>
+  </div>
+</div>`).join("")}` : "";
+
+  el.innerHTML = pendingHtml + `
 <div class="sect">Новый матч</div>
 <div class="card">
   <label class="form-lbl">Соперник</label>
@@ -540,18 +568,27 @@ function renderCaptain() {
   <button class="btn-danger" onclick="closeVoting()">Закрыть голосование</button>
 </div>
 
-<div class="sect">Позиции игроков</div>
-<div class="card">
+<div class="sect">Игроки команды</div>
+<div class="card" id="playersCard">
   ${S.players.map(p=>`
-    <div class="pl-row">
-      <span class="pl-name">${esc(p.name)}</span>
-      <select class="form-sel" style="width:auto;margin:0;padding:7px 10px;font-size:12px" onchange="setPos(${p.id},this.value)">
-        <option ${!p.position?"selected":""} value="">—</option>
-        <option ${p.position==="Вратарь"?"selected":""} value="Вратарь">🧤 Вратарь</option>
-        <option ${p.position==="Защитник"?"selected":""} value="Защитник">🛡 Защитник</option>
-        <option ${p.position==="Нападающий"?"selected":""} value="Нападающий">⚡ Нападающий</option>
-        <option ${p.position==="Универсал"?"selected":""} value="Универсал">🔄 Универсал</option>
-      </select>
+    <div class="pl-row" id="plrow-${p.id}">
+      <div style="flex:1;min-width:0">
+        <div class="pl-name">${esc(p.name)}</div>
+        <div id="rename-${p.id}" style="display:none;margin-top:4px;display:none">
+          <input class="form-in" id="rname-${p.id}" style="margin:0;padding:7px 10px;font-size:13px" value="${esc(p.name)}" placeholder="Реальное имя">
+          <button class="btn-primary btn-sm" style="margin-top:4px;width:auto;padding:6px 14px" onclick="renamePl(${p.id})">Сохранить</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+        <button class="btn-ghost btn-sm" style="padding:5px 10px;font-size:11px" onclick="toggleRename(${p.id})">✏️</button>
+        <select class="form-sel" style="width:auto;margin:0;padding:7px 10px;font-size:12px" onchange="setPos(${p.id},this.value)">
+          <option ${!p.position?"selected":""} value="">—</option>
+          <option ${p.position==="Вратарь"?"selected":""} value="Вратарь">🧤 Вратарь</option>
+          <option ${p.position==="Защитник"?"selected":""} value="Защитник">🛡 Защитник</option>
+          <option ${p.position==="Нападающий"?"selected":""} value="Нападающий">⚡ Нападающий</option>
+          <option ${p.position==="Универсал"?"selected":""} value="Универсал">🔄 Универсал</option>
+        </select>
+      </div>
     </div>
   `).join("")}
 </div>
@@ -622,6 +659,38 @@ async function doClose(mid) {
     toast("🔒 Голосование закрыто");
     if (activePage==="detail"&&detailMatchId===mid) renderDetail(mid);
   } catch(e) { toast("❌ "+e.message); }
+}
+
+function toggleRename(pid) {
+  const el = document.getElementById(`rename-${pid}`);
+  el.style.display = el.style.display === "none" ? "block" : "none";
+}
+
+async function renamePl(pid) {
+  const name = document.getElementById(`rname-${pid}`).value.trim();
+  if (!name) { toast("Введи имя"); return; }
+  try {
+    await api(`/api/players/${pid}/name`, {method:"PUT", body:JSON.stringify({name})});
+    toast("✅ Имя обновлено");
+    S.players = await api("/api/players");
+    renderCaptain();
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+async function approvePl(pid) {
+  const name = document.getElementById(`pendname-${pid}`).value.trim();
+  try {
+    await api(`/api/players/${pid}/approve`, {method:"PUT", body:JSON.stringify({name})});
+    toast("✅ Игрок принят");
+    S.players = await api("/api/players");
+    renderCaptain();
+  } catch(e) { toast("❌ "+e.message); }
+}
+
+async function rejectPl(pid) {
+  // For now just hide — future: delete from DB
+  document.getElementById(`pend-${pid}`)?.remove();
+  toast("Игрок отклонён");
 }
 
 async function setPos(pid, pos) {
