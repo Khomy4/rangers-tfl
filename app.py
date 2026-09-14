@@ -113,6 +113,13 @@ def init():
             target_id INTEGER,
             PRIMARY KEY(match_id, voter_id, vtype)
         )""")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS lineup(
+            match_id INTEGER,
+            slot TEXT,
+            player_id INTEGER,
+            PRIMARY KEY(match_id, slot)
+        )""")
         # Safe migrations — run every startup, idempotent
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS approved INTEGER DEFAULT 0")
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS position TEXT DEFAULT ''")
@@ -245,6 +252,9 @@ class StatIn(BaseModel):
 class VoteIn(BaseModel):
     vtype: str
     target_id: int
+
+class LineupIn(BaseModel):
+    lineup: dict  # {slot: player_id or None}
 
 class PositionIn(BaseModel):
     position: str
@@ -472,6 +482,10 @@ def match_detail(mid: int, request: Request):
         eligible_n = c.fetchone()["n"]
         d["vote_progress"] = {"mvp_voted": mvp_voted_n, "def_voted": def_voted_n, "eligible": eligible_n}
 
+        # Lineup
+        c.execute("SELECT slot, player_id FROM lineup WHERE match_id=?", (mid,))
+        d["lineup"] = {r["slot"]: r["player_id"] for r in c.fetchall()}
+
         # Captain sees live vote breakdown
         if is_captain(p) and not m["voting_closed"]:
             name_map = {pl["id"]: pl["name"] for pl in all_players}
@@ -640,6 +654,35 @@ def vote(mid: int, x: VoteIn, request: Request):
         def_n = c.fetchone()["n"]
         if played_n > 0 and mvp_n >= played_n and def_n >= played_n:
             c.execute("UPDATE matches SET voting_closed=1 WHERE id=?", (mid,))
+    return {"ok": True}
+
+
+@app.post("/api/matches/{mid}/lineup")
+def save_lineup(mid: int, x: LineupIn, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        for slot, pid in x.lineup.items():
+            if pid:
+                c.execute(
+                    """INSERT INTO lineup(match_id,slot,player_id) VALUES(?,?,?)
+                       ON CONFLICT(match_id,slot) DO UPDATE SET player_id=EXCLUDED.player_id""",
+                    (mid, slot, int(pid))
+                )
+            else:
+                c.execute("DELETE FROM lineup WHERE match_id=? AND slot=?", (mid, slot))
+    return {"ok": True}
+
+
+@app.delete("/api/matches/{mid}/vote")
+def reset_vote(mid: int, request: Request):
+    """Captain-only: delete their own votes for a match (to re-vote or for testing)."""
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        c.execute("DELETE FROM votes WHERE match_id=? AND voter_id=?", (mid, p["id"]))
     return {"ok": True}
 
 
