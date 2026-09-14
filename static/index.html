@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- v20260914-voting -->
 <html lang="ru">
 <head>
 <meta charset="utf-8">
@@ -407,16 +408,40 @@ ${scored && m.stats.length ? `
 ${canVote ? `
 <div class="sect">Голосование</div>
 <div class="card">
-  <div style="font-size:12px;color:#666;margin-bottom:10px">За себя голосовать нельзя. Можно переголосовать.</div>
-  <label class="form-lbl">⭐ MVP матча</label>
-  <select class="form-sel" id="mvpSel"><option value="">Выбери игрока...</option>${voteOpts}</select>
-  <button class="btn-primary" style="margin-bottom:14px" onclick="doVote(${mid},'mvp','mvpSel')">Проголосовать за MVP</button>
-  <label class="form-lbl">🛡 Лучший в защите</label>
-  <select class="form-sel" id="defSel"><option value="">Выбери игрока...</option>${voteOpts}</select>
-  <button class="btn-primary" onclick="doVote(${mid},'defense','defSel')">Проголосовать за защиту</button>
-  ${m.my_votes?.mvp||m.my_votes?.defense?`<div style="font-size:11px;color:#666;margin-top:10px;text-align:center">Ты уже проголосовал — можно изменить</div>`:""}
+  <div style="font-size:12px;color:#666;margin-bottom:10px">За себя голосовать нельзя. Голос изменить нельзя.</div>
+  ${m.my_votes?.mvp
+    ? `<div style="font-size:13px;margin-bottom:14px">⭐ MVP: <b style="color:#f59e0b">${esc(playedPlayers.find(p=>p.player_id===m.my_votes.mvp)?.name||"—")}</b> <span style="color:#555;font-size:11px">— голос отдан</span></div>`
+    : `<label class="form-lbl">⭐ MVP матча</label>
+       <select class="form-sel" id="mvpSel"><option value="">Выбери игрока...</option>${voteOpts}</select>
+       <button class="btn-primary" style="margin-bottom:14px" onclick="doVote(${mid},'mvp','mvpSel')">Проголосовать за MVP</button>`
+  }
+  ${m.my_votes?.defense
+    ? `<div style="font-size:13px">🛡 Защита: <b style="color:#3b82f6">${esc(playedPlayers.find(p=>p.player_id===m.my_votes.defense)?.name||"—")}</b> <span style="color:#555;font-size:11px">— голос отдан</span></div>`
+    : `<label class="form-lbl">🛡 Лучший в защите</label>
+       <select class="form-sel" id="defSel"><option value="">Выбери игрока...</option>${voteOpts}</select>
+       <button class="btn-primary" onclick="doVote(${mid},'defense','defSel')">Проголосовать за защиту</button>`
+  }
 </div>
 ` : scored && m.voting_closed ? `<div class="card-sm" style="font-size:13px;color:#666;text-align:center">🔒 Голосование закрыто</div>` : ""}
+
+${scored && !m.voting_closed && m.vote_progress ? `
+<div class="card-sm" style="font-size:12px;color:#666">
+  ${S.me.captain && m.vote_counts ? `
+    <div style="font-weight:700;color:#aaa;margin-bottom:8px">📊 Ход голосования (только ты видишь)</div>
+    <div style="margin-bottom:6px;font-size:11px;color:#555">Проголосовало: MVP ${m.vote_progress.mvp_voted}/${m.vote_progress.eligible} · Защита ${m.vote_progress.def_voted}/${m.vote_progress.eligible}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#f59e0b;margin-bottom:4px">⭐ MVP</div>
+        ${m.vote_counts.mvp.length ? m.vote_counts.mvp.map(v=>`<div style="font-size:12px">${esc(v.name)} — ${v.count}</div>`).join("") : `<div style="font-size:11px;color:#444">нет голосов</div>`}
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#3b82f6;margin-bottom:4px">🛡 Защита</div>
+        ${m.vote_counts.defense.length ? m.vote_counts.defense.map(v=>`<div style="font-size:12px">${esc(v.name)} — ${v.count}</div>`).join("") : `<div style="font-size:11px;color:#444">нет голосов</div>`}
+      </div>
+    </div>
+  ` : `<div style="text-align:center">Проголосовало: MVP ${m.vote_progress.mvp_voted}/${m.vote_progress.eligible} · Защита ${m.vote_progress.def_voted}/${m.vote_progress.eligible}</div>`}
+</div>
+` : ""}
 `;
   } catch(e) {
     el.innerHTML=`<div class="empty"><div class="empty-ic">⚠️</div><div class="empty-tx">${esc(e.message)}</div></div>`;
