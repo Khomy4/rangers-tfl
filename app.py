@@ -16,7 +16,7 @@ BASE = Path(__file__).resolve().parent
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 CAPTAIN_ID = int(os.getenv("CAPTAIN_TELEGRAM_ID", "0") or 0)
-DEV = os.getenv("DEV_MODE", "true").lower() == "true"
+DEV = os.getenv("DEV_MODE", "false").lower() == "true"
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
@@ -324,6 +324,21 @@ def rename_player(pid: int, x: PlayerNameIn, request: Request):
     return {"ok": True}
 
 
+@app.delete("/api/players/{pid}")
+def delete_player(pid: int, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    if p["id"] == pid:
+        raise HTTPException(400, "Нельзя удалить себя")
+    with db() as c:
+        c.execute("DELETE FROM rsvp WHERE player_id=?", (pid,))
+        c.execute("DELETE FROM stats WHERE player_id=?", (pid,))
+        c.execute("DELETE FROM votes WHERE voter_id=? OR target_id=?", (pid, pid))
+        c.execute("DELETE FROM players WHERE id=?", (pid,))
+    return {"ok": True}
+
+
 @app.put("/api/players/{pid}/position")
 def set_position(pid: int, x: PositionIn, request: Request):
     p = get_player(request)
@@ -461,6 +476,8 @@ def add_match(x: MatchIn, request: Request):
             (x.season_id or 1, x.opponent, x.match_date, x.rsvp_deadline),
         )
         row = c.fetchone()
+        # Auto-close voting on all previously scored matches
+        c.execute("UPDATE matches SET voting_closed=1 WHERE gf IS NOT NULL AND voting_closed=0")
         return {"id": row["id"]}
 
 

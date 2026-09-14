@@ -482,6 +482,38 @@ function renderBank() {
 <div class="card-sm" style="font-size:12px;color:#555;text-align:center;line-height:1.6">
   Командный банк тратится вместе после турнира<br>
   Личный фонд распределяется по итогам рейтинга
+</div>
+<button class="btn-ghost" style="margin-top:4px" onclick="togglePremInfo()">ℹ️ Как работают премиальные</button>
+<div id="prem-info" style="display:none;margin-top:10px">
+<div class="card">
+  <div style="font-size:15px;font-weight:800;margin-bottom:14px">💰 Как мы зарабатываем</div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:3px">✅ Дисциплина — 300 ₽</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.5">Все вовремя ответили «Играю / Не играю» и никто не пропал без предупреждения.</div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🏆 Результат матча</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">
+    Ничья — 200 ₽ &nbsp;·&nbsp; Победа в 1 мяч — 300 ₽ &nbsp;·&nbsp; в 2 — 400 ₽ &nbsp;·&nbsp; в 3 — 500 ₽ &nbsp;·&nbsp; в 4+ — 600 ₽
+  </div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">⭐ Личные очки</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px;line-height:1.8">
+    ⚽ Гол +2 &nbsp;·&nbsp; 🎯 Ассист +1 &nbsp;·&nbsp; 🏅 MVP +3 &nbsp;·&nbsp; 🛡 Лучший в обороне +2<br>
+    🧤 Сухой матч вратаря +3 &nbsp;·&nbsp; Пропустил 1–2 мяча +1
+  </div>
+  <div style="font-size:11px;color:#555;margin-bottom:12px;line-height:1.5">MVP и лучший в обороне — голосование команды после матча. За себя нельзя.</div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">💵 Призовой фонд</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.6">
+    600 ₽ с каждого матча копятся весь сезон и делятся между лучшими игроками по итогам турнира.
+  </div>
+
+  <div style="border-top:1px solid #222;padding-top:10px;font-size:12px;color:#666;line-height:1.8">
+    <b style="color:#3b82f6">💰 600 ₽/матч</b> → в личный призовой фонд сезона<br>
+    <b style="color:#22c55e">🏦 Дисциплина + результат</b> → в командный банк<br>
+    <span style="font-size:11px;color:#444">(тратится вместе по решению команды после сезона)</span>
+  </div>
+</div>
 </div>`;
 }
 
@@ -493,13 +525,15 @@ async function renderCaptain() {
   const pOpts = S.players.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
 
   // Load pending + ALL approved players (including Босс) for management panel
-  let pending = [], allPlayers = [];
+  let pending = [], allPlayers = [], loadErr = "";
   try {
     [pending, allPlayers] = await Promise.all([
       api("/api/captain/pending"),
       api("/api/captain/all_players"),
     ]);
-  } catch(e) {}
+  } catch(e) { loadErr = e.message; }
+
+  const errHtml = loadErr ? `<div class="card-sm" style="color:#f87171;font-size:12px;text-align:center;margin-bottom:8px">⚠️ Ошибка загрузки: ${esc(loadErr)}</div>` : "";
 
   const pendingHtml = pending.length ? `
 <div class="sect">⚠️ Заявки на вступление (${pending.length})</div>
@@ -514,7 +548,7 @@ ${pending.map(pl=>`
   </div>
 </div>`).join("")}` : "";
 
-  el.innerHTML = pendingHtml + `
+  el.innerHTML = errHtml + pendingHtml + `
 <div class="sect">Новый матч</div>
 <div class="card">
   <label class="form-lbl">Соперник</label>
@@ -608,6 +642,7 @@ ${pending.map(pl=>`
           <option ${p.position==="Универсал"?"selected":""} value="Универсал">🔄 Универсал</option>
           <option ${p.position==="Босс"?"selected":""} value="Босс">👑 Босс</option>
         </select>
+        <button class="btn-danger btn-sm" style="padding:5px 10px;font-size:11px" onclick="kickPl(${p.id},'${esc(p.name)}')">🗑</button>
       </div>
     </div>
   `).join("")}
@@ -753,8 +788,25 @@ async function approvePl(pid) {
 }
 
 async function rejectPl(pid) {
-  document.getElementById(`pend-${pid}`)?.remove();
-  toast("Игрок отклонён");
+  try {
+    await api(`/api/players/${pid}`, {method:"DELETE"});
+    toast("❌ Заявка отклонена");
+    renderCaptain();
+  } catch(e) { toast("❌ " + e.message); }
+}
+
+async function kickPl(pid, name) {
+  const doKick = async () => {
+    try {
+      await api(`/api/players/${pid}`, {method:"DELETE"});
+      toast(`🗑 ${name} удалён из команды`);
+      S.players = await api("/api/players");
+      renderCaptain();
+    } catch(e) { toast("❌ " + e.message); }
+  };
+  if (tg) {
+    tg.showConfirm(`Удалить ${name} из команды? Его статистика тоже будет удалена.`, ok => { if (ok) doKick(); });
+  } else if (confirm(`Удалить ${name} из команды?`)) { doKick(); }
 }
 
 async function setPos(pid, pos) {
@@ -785,6 +837,11 @@ async function doNewSeason(name) {
     if (s) document.getElementById("seasonBadge").textContent = s.name;
     renderMatches(); renderCaptain(); loadRating(); loadBank();
   } catch(e) { toast("❌ "+e.message); }
+}
+
+function togglePremInfo() {
+  const el = document.getElementById("prem-info");
+  el.style.display = el.style.display === "none" ? "block" : "none";
 }
 
 boot();
