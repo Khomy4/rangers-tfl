@@ -120,6 +120,19 @@ def init():
             player_id INTEGER,
             PRIMARY KEY(match_id, slot)
         )""")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS lineup_subs(
+            match_id INTEGER,
+            slot TEXT,
+            sub_index INTEGER,
+            player_id INTEGER,
+            PRIMARY KEY(match_id, slot, sub_index)
+        )""")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS match_notes(
+            match_id INTEGER PRIMARY KEY,
+            notes TEXT
+        )""")
         # Safe migrations — run every startup, idempotent
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS approved INTEGER DEFAULT 0")
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS position TEXT DEFAULT ''")
@@ -255,6 +268,10 @@ class VoteIn(BaseModel):
 
 class LineupIn(BaseModel):
     lineup: dict  # {slot: player_id or None}
+    subs: Optional[dict] = None  # {slot: [pid1, pid2]}
+
+class NotesIn(BaseModel):
+    notes: str
 
 class PositionIn(BaseModel):
     position: str
@@ -486,6 +503,22 @@ def match_detail(mid: int, request: Request):
         c.execute("SELECT slot, player_id FROM lineup WHERE match_id=?", (mid,))
         d["lineup"] = {r["slot"]: r["player_id"] for r in c.fetchall()}
 
+        # Subs
+        c.execute("SELECT slot, sub_index, player_id FROM lineup_subs WHERE match_id=?", (mid,))
+        subs_raw = c.fetchall()
+        d["subs"] = {}
+        for r in subs_raw:
+            sl = r["slot"]
+            if sl not in d["subs"]:
+                d["subs"][sl] = [None, None]
+            idx = r["sub_index"] - 1
+            if 0 <= idx <= 1:
+                d["subs"][sl][idx] = r["player_id"]
+        # Notes
+        c.execute("SELECT notes FROM match_notes WHERE match_id=?", (mid,))
+        nrow = c.fetchone()
+        d["notes"] = nrow["notes"] if nrow else ""
+
         # Captain sees live vote breakdown
         if is_captain(p) and not m["voting_closed"]:
             name_map = {pl["id"]: pl["name"] for pl in all_players}
@@ -672,6 +705,34 @@ def save_lineup(mid: int, x: LineupIn, request: Request):
                 )
             else:
                 c.execute("DELETE FROM lineup WHERE match_id=? AND slot=?", (mid, slot))
+        if x.subs:
+            for slot, sub_list in x.subs.items():
+                for idx, pid in enumerate((sub_list or [])[:2], 1):
+                    if pid:
+                        c.execute(
+                            """INSERT INTO lineup_subs(match_id,slot,sub_index,player_id) VALUES(?,?,?,?)
+                               ON CONFLICT(match_id,slot,sub_index) DO UPDATE SET player_id=EXCLUDED.player_id""",
+                            (mid, slot, idx, int(pid))
+                        )
+                    else:
+                        c.execute(
+                            "DELETE FROM lineup_subs WHERE match_id=? AND slot=? AND sub_index=?",
+                            (mid, slot, idx)
+                        )
+    return {"ok": True}
+
+
+@app.post("/api/matches/{mid}/notes")
+def save_notes(mid: int, x: NotesIn, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        c.execute(
+            """INSERT INTO match_notes(match_id,notes) VALUES(?,?)
+               ON CONFLICT(match_id) DO UPDATE SET notes=EXCLUDED.notes""",
+            (mid, x.notes)
+        )
     return {"ok": True}
 
 
