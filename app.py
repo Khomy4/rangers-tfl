@@ -432,8 +432,9 @@ def match_detail(mid: int, request: Request):
         stats_map = {s["player_id"]: dict(s) for s in c.fetchall()}
 
         c.execute("SELECT * FROM votes WHERE match_id=?", (mid,))
+        all_votes = c.fetchall()
         mvp_votes, def_votes = {}, {}
-        for v in c.fetchall():
+        for v in all_votes:
             bucket = mvp_votes if v["vtype"] == "mvp" else def_votes
             bucket[v["target_id"]] = bucket.get(v["target_id"], 0) + 1
         mvp_winner = max(mvp_votes, key=mvp_votes.get) if mvp_votes else None
@@ -444,11 +445,10 @@ def match_detail(mid: int, request: Request):
             st = stats_map.get(pl["id"])
             if not st:
                 continue
-            pts = (
-                st["goals"] * 2 + st["assists"] + st["keeper_points"]
-                + (3 if pl["id"] == mvp_winner else 0)
-                + (2 if pl["id"] == def_winner else 0)
-            )
+            # MVP/defense points only count if voting is closed
+            mvp_pts = 3 if (m["voting_closed"] and pl["id"] == mvp_winner) else 0
+            def_pts = 2 if (m["voting_closed"] and pl["id"] == def_winner) else 0
+            pts = st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts
             d["stats"].append({
                 "player_id": pl["id"],
                 "name": pl["name"],
@@ -457,13 +457,29 @@ def match_detail(mid: int, request: Request):
                 "goals": st["goals"],
                 "assists": st["assists"],
                 "keeper_points": st["keeper_points"],
-                "is_mvp": pl["id"] == mvp_winner,
-                "is_best_defense": pl["id"] == def_winner,
+                "is_mvp": m["voting_closed"] and pl["id"] == mvp_winner,
+                "is_best_defense": m["voting_closed"] and pl["id"] == def_winner,
                 "points": pts,
             })
 
         c.execute("SELECT * FROM votes WHERE match_id=? AND voter_id=?", (mid, p["id"]))
         d["my_votes"] = {v["vtype"]: v["target_id"] for v in c.fetchall()}
+
+        # Voting progress
+        mvp_voted_n = len(set(v["voter_id"] for v in all_votes if v["vtype"] == "mvp"))
+        def_voted_n = len(set(v["voter_id"] for v in all_votes if v["vtype"] == "defense"))
+        c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
+        eligible_n = c.fetchone()["n"]
+        d["vote_progress"] = {"mvp_voted": mvp_voted_n, "def_voted": def_voted_n, "eligible": eligible_n}
+
+        # Captain sees live vote breakdown
+        if is_captain(p) and not m["voting_closed"]:
+            name_map = {pl["id"]: pl["name"] for pl in all_players}
+            def breakdown(vdict):
+                items = [{"id": k, "name": name_map.get(k, "?"), "count": v} for k, v in vdict.items()]
+                return sorted(items, key=lambda x: -x["count"])
+            d["vote_counts"] = {"mvp": breakdown(mvp_votes), "defense": breakdown(def_votes)}
+
         return d
 
 
@@ -608,11 +624,22 @@ def vote(mid: int, x: VoteIn, request: Request):
             )
             if not c.fetchone():
                 raise HTTPException(403, "Ты не участвовал в этом матче")
-        c.execute(
-            """INSERT INTO votes VALUES(?,?,?,?)
-               ON CONFLICT(match_id,voter_id,vtype) DO UPDATE SET target_id=EXCLUDED.target_id""",
-            (mid, p["id"], x.vtype, x.target_id),
-        )
+        # One vote only — no changes allowed
+        c.execute("SELECT 1 FROM votes WHERE match_id=? AND voter_id=? AND vtype=?",
+                  (mid, p["id"], x.vtype))
+        if c.fetchone():
+            raise HTTPException(400, "Ты уже проголосовал")
+        c.execute("INSERT INTO votes VALUES(?,?,?,?)",
+                  (mid, p["id"], x.vtype, x.target_id))
+        # Auto-close if all played players voted for both mvp and defense
+        c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
+        played_n = c.fetchone()["n"]
+        c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='mvp'", (mid,))
+        mvp_n = c.fetchone()["n"]
+        c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='defense'", (mid,))
+        def_n = c.fetchone()["n"]
+        if played_n > 0 and mvp_n >= played_n and def_n >= played_n:
+            c.execute("UPDATE matches SET voting_closed=1 WHERE id=?", (mid,))
     return {"ok": True}
 
 
@@ -648,20 +675,22 @@ def leaderboard(request: Request, season_id: Optional[int] = None):
                 st = c.fetchone()
                 c.execute(
                     f"""SELECT COUNT(*) AS n FROM (
-                        SELECT match_id, target_id,
-                               RANK() OVER(PARTITION BY match_id ORDER BY COUNT(*) DESC) AS rk
-                        FROM votes WHERE vtype='mvp' AND match_id IN ({ph})
-                        GROUP BY match_id, target_id
+                        SELECT v.match_id, v.target_id,
+                               RANK() OVER(PARTITION BY v.match_id ORDER BY COUNT(*) DESC) AS rk
+                        FROM votes v JOIN matches mx ON mx.id=v.match_id
+                        WHERE v.vtype='mvp' AND v.match_id IN ({ph}) AND mx.voting_closed=1
+                        GROUP BY v.match_id, v.target_id
                     ) q WHERE target_id=%s AND rk=1""",
                     match_ids + [pl["id"]],
                 )
                 mvp = c.fetchone()["n"]
                 c.execute(
                     f"""SELECT COUNT(*) AS n FROM (
-                        SELECT match_id, target_id,
-                               RANK() OVER(PARTITION BY match_id ORDER BY COUNT(*) DESC) AS rk
-                        FROM votes WHERE vtype='defense' AND match_id IN ({ph})
-                        GROUP BY match_id, target_id
+                        SELECT v.match_id, v.target_id,
+                               RANK() OVER(PARTITION BY v.match_id ORDER BY COUNT(*) DESC) AS rk
+                        FROM votes v JOIN matches mx ON mx.id=v.match_id
+                        WHERE v.vtype='defense' AND v.match_id IN ({ph}) AND mx.voting_closed=1
+                        GROUP BY v.match_id, v.target_id
                     ) q WHERE target_id=%s AND rk=1""",
                     match_ids + [pl["id"]],
                 )
