@@ -600,7 +600,8 @@ def vote(mid: int, x: VoteIn, request: Request):
             raise HTTPException(400)
         if x.target_id == p["id"]:
             raise HTTPException(400, "Нельзя голосовать за себя")
-        if not is_captain(p):
+        is_boss = (p.get("position") or "") == "Босс"
+        if not is_captain(p) and not is_boss:
             c.execute(
                 "SELECT 1 AS ok FROM stats WHERE match_id=? AND player_id=? AND played=1",
                 (mid, p["id"]),

@@ -338,7 +338,8 @@ async function renderDetail(mid) {
 
     const myStats = m.stats.find(s=>s.player_id===S.me.player.id);
     const myPlayed = myStats?.played === 1;
-    const canVote = scored && myPlayed && !m.voting_closed;
+    const isBoss = S.me.player.position === "Босс";
+    const canVote = scored && (myPlayed || isBoss) && !m.voting_closed;
     const playedPlayers = m.stats.filter(s=>s.played && s.player_id!==S.me.player.id);
     const voteOpts = playedPlayers.map(p=>`<option value="${p.player_id}">${esc(p.name)}</option>`).join("");
 
