@@ -116,6 +116,8 @@ def init():
         # Safe migrations — run every startup, idempotent
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS approved INTEGER DEFAULT 0")
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS position TEXT DEFAULT ''")
+        # One-time fix: reopen voting for already-played matches
+        c.execute("UPDATE matches SET voting_closed=0 WHERE gf IS NOT NULL AND voting_closed=1")
         if CAPTAIN_ID:
             c.execute("UPDATE players SET approved=1 WHERE telegram_id=?", (CAPTAIN_ID,))
         c.execute("SELECT COUNT(*) AS n FROM seasons")
