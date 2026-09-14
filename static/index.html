@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- v20260914-voting-b -->
+<!-- v20260914-voting-c -->
 <html lang="ru">
 <head>
 <meta charset="utf-8">
@@ -508,10 +508,7 @@ function renderBank() {
   const el = document.getElementById("pg-bank");
   el.innerHTML = `
 <div class="sect">Прогресс сезона</div>
-<div class="bank-grid">
-  <div class="bank-cell"><div class="bank-lbl">Сыграно</div><div class="bank-val" style="color:#fff">${s.played} из 5</div></div>
-  <div class="bank-cell"><div class="bank-lbl">До финала</div><div class="bank-val" style="color:#f59e0b">${Math.max(0,5-s.played)}</div></div>
-</div>
+<div class="bank-cell"><div class="bank-lbl">Сыграно</div><div class="bank-val" style="color:#fff">${s.played} из 5</div></div>
 <div class="sect">Заработали вместе</div>
 <div class="bank-grid">
   <div class="bank-cell"><div class="bank-lbl">Командный банк</div><div class="bank-val" style="color:#22c55e">${rub(s.team_bank)}</div></div>
