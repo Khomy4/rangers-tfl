@@ -158,6 +158,10 @@ input,select,option{font-family:inherit;outline:none}
 .sub-bdg svg{position:absolute;inset:0;width:100%;height:100%}
 .sub-av-m{position:relative;z-index:2;width:13px;height:13px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:5.5px;font-weight:900;color:#000;background:#f0c030;box-shadow:0 1px 3px rgba(0,0,0,.6)}
 .sub-av-m.kp{background:#e05060;color:#fff}
+/* Team switcher */
+.team-sw{display:flex;gap:2px;background:#111;border-radius:8px;padding:3px;flex-shrink:0}
+.team-sw-btn{width:30px;height:24px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;border-radius:6px;cursor:pointer;color:#666;transition:background .15s,color .15s;user-select:none}
+.team-sw-btn.active{background:#4a9a40;color:#fff}
 /* Position info sheet */
 .pi-overlay{position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.65);display:none;align-items:flex-end}
 .pi-overlay.open{display:flex}
@@ -222,7 +226,7 @@ input,select,option{font-family:inherit;outline:none}
     <div style="font-size:15px;font-weight:700;margin-bottom:4px">Выбери игрока</div>
     <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px" id="lpPos"></div>
     <div id="lpList"></div>
-    <div class="lp-clr" onclick="if(piMode==='main')clearLP(lpState.slot,lpState.mid);else{lpSubs[lpState.slot][lpState.subIdx]=null;closeLPicker();renderPitchTokens();if(lpState.slot)openPosInfo(lpState.slot,lpState.mid);}">✕ Убрать игрока</div>
+    <div class="lp-clr" onclick="if(piMode==='main')clearLP(lpState.slot,lpState.mid);else{if(lpSubs[lpState.slot])lpSubs[lpState.slot].splice(lpState.subIdx,1);closeLPicker();renderPitchTokens();if(lpState.slot)openPosInfo(lpState.slot,lpState.mid);}">✕ Убрать игрока</div>
   </div>
 </div>
 
@@ -386,7 +390,7 @@ async function renderDetail(mid) {
   el.innerHTML = `<div class="loading">Загрузка...</div>`;
   try {
     const m = await api(`/api/matches/${mid}`);
-    initLP(m.lineup, m.subs, m.notes);
+    initLP(m.lineup, m.subs, m.lineup2||{}, m.subs2||{}, m.notes);
     const scored = m.gf !== null;
     const dt = new Date(m.match_date);
     const dateStr = dt.toLocaleDateString("ru-RU",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
@@ -946,9 +950,11 @@ function initials(name){
   const p = name.trim().split(/\s+/);
   return p.length>=2 ? (p[0][0]+p[1][0]).toUpperCase() : name.slice(0,2).toUpperCase();
 }
-let lpState = {slot:null, mid:null, subIdx:null};
-let lpLineup = {};
-let lpSubs = {};
+let lpTeam = 1;
+let lpData = {1:{lineup:{},subs:{}}, 2:{lineup:{},subs:{}}};
+let lpLineup = lpData[1].lineup;
+let lpSubs   = lpData[1].subs;
+let lpState  = {slot:null, mid:null, subIdx:null};
 let lpNotes = "";
 let piMode = null; // 'main'|'sub0'|'sub1'
 const LP_SLOTS = {
@@ -960,16 +966,30 @@ const LP_SLOTS = {
   rw: {abbr:"ПП",l:"72%",t:"32%",lbl:"Правый полузащитник"},
 };
 
-function initLP(serverLineup, serverSubs, serverNotes) {
-  lpLineup = {};
-  lpSubs = {};
-  lpNotes = serverNotes || "";
-  Object.keys(LP_SLOTS).forEach(sl => {
-    lpLineup[sl] = (serverLineup||{})[sl] || null;
-    lpSubs[sl] = (serverSubs||{})[sl] || [null, null];
-    if (!Array.isArray(lpSubs[sl])) lpSubs[sl] = [null, null];
-    while (lpSubs[sl].length < 2) lpSubs[sl].push(null);
+function initLP(s1, sub1, s2, sub2, notes) {
+  lpNotes = notes || "";
+  [1,2].forEach(t => {
+    const sl_map = t===1 ? (s1||{}) : (s2||{});
+    const sb_map = t===1 ? (sub1||{}) : (sub2||{});
+    Object.keys(LP_SLOTS).forEach(sl => {
+      lpData[t].lineup[sl] = sl_map[sl] || null;
+      lpData[t].subs[sl]   = Array.isArray(sb_map[sl]) ? [...sb_map[sl]] : [];
+    });
   });
+  lpTeam   = 1;
+  lpLineup = lpData[1].lineup;
+  lpSubs   = lpData[1].subs;
+}
+function switchTeam(t) {
+  if (lpTeam === t) return;
+  lpTeam   = t;
+  lpLineup = lpData[t].lineup;
+  lpSubs   = lpData[t].subs;
+  document.querySelectorAll(".team-sw-btn").forEach(b => b.classList.toggle("active", +b.dataset.t === t));
+  renderPitchTokens();
+  // rebuild notes textarea if visible
+  const ta = document.getElementById("notesTA");
+  if (ta) ta.value = lpNotes;
 }
 
 function subBadgeSvg(){
@@ -990,7 +1010,7 @@ function renderPitchTokens() {
     ce.textContent = pid ? initials(pl.name) : sl.abbr;
     ne.textContent = pl ? pl.name.split(" ")[0] : "—";
     if (sbe) {
-      const subList = lpSubs[slot] || [null,null];
+      const subList = lpSubs[slot] || [];
       sbe.innerHTML = subList.filter(Boolean).map(spid => {
         const sp = pm[spid]; if (!sp) return "";
         const sCls = sp.position==="Вратарь" ? " kp" : "";
@@ -1025,7 +1045,13 @@ function lineupHtml(m) {
 <div class="card" style="padding:14px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
     <span style="font-size:13px;font-weight:700">Расстановка</span>
-    <span style="font-size:11px;color:#555;background:#222;border-radius:6px;padding:3px 8px">1–2–1–2</span>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="team-sw" id="teamSw">
+        <div class="team-sw-btn active" data-t="1" onclick="switchTeam(1)">1</div>
+        <div class="team-sw-btn" data-t="2" onclick="switchTeam(2)">2</div>
+      </div>
+      <span style="font-size:11px;color:#555;background:#222;border-radius:6px;padding:3px 8px">1–2–1–2</span>
+    </div>
   </div>
   <div class="pitch2">
     <svg viewBox="0 0 100 156" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1061,21 +1087,25 @@ function openPosInfo(slot, mid) {
   const sl = LP_SLOTS[slot];
   const pid = lpLineup[slot];
   const pl = pid ? pm[pid] : null;
-  const subs = lpSubs[slot] || [null,null];
+  const subs = lpSubs[slot] || [];
   const isCap = S.me.captain;
   const piSheet = document.getElementById("piSheet");
   const subRows = subs.map((spid, i) => {
     const sp = spid ? pm[spid] : null;
     const avCls = sp ? (sp.position==="Вратарь" ? " filled kp" : " filled") : "";
-    const label = sp ? sp.name : `Замена ${i+1}`;
-    const color = sp ? "" : "color:#555";
-    const clickAttr = isCap ? `onclick="openSubPick('${slot}',${i},${mid})"` : "";
-    return `<div class="pi-sub-row${isCap?" clickable":""}" ${clickAttr}>
-      <div class="pi-sub-av${avCls}">${sp ? initials(sp.name) : (i===0?"①":"②")}</div>
-      <div style="font-size:13px;font-weight:600;${color}">${label}</div>
-      ${isCap && sp ? `<div style="margin-left:auto;font-size:12px;color:#ef4444;cursor:pointer" onclick="event.stopPropagation();clearSub('${slot}',${i},${mid})">✕</div>` : ""}
+    return `<div class="pi-sub-row">
+      <div class="pi-sub-av${avCls}">${sp ? initials(sp.name) : "?"}</div>
+      <div style="font-size:13px;font-weight:600">${sp ? sp.name : "—"}</div>
+      ${isCap ? `<div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <div style="font-size:12px;color:#4a9a40;cursor:pointer" onclick="openSubPick('${slot}',${i},${mid})">✎</div>
+        <div style="font-size:12px;color:#ef4444;cursor:pointer" onclick="event.stopPropagation();clearSub('${slot}',${i},${mid})">✕</div>
+      </div>` : ""}
     </div>`;
   }).join("");
+  const addSubBtn = isCap ? `<div class="pi-sub-row clickable" onclick="openSubPick('${slot}',${subs.length},${mid})">
+    <div class="pi-sub-av" style="background:#1a3a1a;color:#4a9a40;font-size:14px;font-weight:900">+</div>
+    <div style="font-size:13px;color:#4a9a40;font-weight:600">Добавить замену</div>
+  </div>` : "";
   const captainActions = isCap && pl ? `<div class="pi-act-row">
     <button class="pi-act change" onclick="closePosInfo();openLP('${slot}',${mid})">↔ Сменить</button>
     <button class="pi-act remove" onclick="clearLP('${slot}',${mid})">✕ Убрать</button>
@@ -1088,6 +1118,7 @@ function openPosInfo(slot, mid) {
     </div>
     <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Замены</div>
     ${subRows}
+    ${addSubBtn}
     ${captainActions}
   `;
   document.getElementById("piOverlay").classList.add("open");
@@ -1103,9 +1134,9 @@ function openSubPick(slot, subIdx, mid) {
   document.getElementById("lpPos").textContent = `Замена ${subIdx+1} — ${LP_SLOTS[slot].lbl}`;
   document.getElementById("lpList").innerHTML = S.players.map(pl => {
     const inStart = assigned.has(pl.id);
-    const inSub = allSubs.includes(pl.id) && (lpSubs[slot]||[])[subIdx] !== pl.id;
-    const grayed = inStart || inSub;
-    const note = inStart ? " (в старте)" : inSub ? " (уже замена)" : "";
+    const inSub = false; // same sub can cover multiple slots
+    const grayed = inStart;
+    const note = inStart ? " (в старте)" : "";
     return `<div class="lp-row"${grayed?" style='opacity:.3;pointer-events:none'":""} onclick="assignSub(${pl.id})">
       <div class="lp-av${pl.position==="Вратарь"?" kp":""}">${initials(pl.name)}</div>
       <div style="font-size:14px;font-weight:600">${pl.name}<span style="color:#666;font-size:11px">${note}</span></div>
@@ -1115,15 +1146,19 @@ function openSubPick(slot, subIdx, mid) {
 }
 function assignSub(pid) {
   const {slot, mid, subIdx} = lpState;
-  if (!lpSubs[slot]) lpSubs[slot] = [null,null];
-  lpSubs[slot][subIdx] = pid;
+  if (!lpSubs[slot]) lpSubs[slot] = [];
+  if (subIdx >= lpSubs[slot].length) {
+    lpSubs[slot].push(pid);
+  } else {
+    lpSubs[slot][subIdx] = pid;
+  }
   closeLPicker();
   renderPitchTokens();
   openPosInfo(slot, mid);
 }
 function clearSub(slot, subIdx, mid) {
-  if (!lpSubs[slot]) lpSubs[slot] = [null,null];
-  lpSubs[slot][subIdx] = null;
+  if (!lpSubs[slot]) return;
+  lpSubs[slot].splice(subIdx, 1);
   renderPitchTokens();
   openPosInfo(slot, mid);
 }
@@ -1164,8 +1199,8 @@ function clearLP() {
 
 async function saveLineup(mid) {
   try {
-    await api(`/api/matches/${mid}/lineup`,{method:"POST",body:JSON.stringify({lineup:lpLineup,subs:lpSubs})});
-    toast("✅ Состав сохранён");
+    await api(`/api/matches/${mid}/lineup`,{method:"POST",body:JSON.stringify({lineup:lpLineup,subs:lpSubs,team_num:lpTeam})});
+    toast(`✅ Состав ${lpTeam} сохранён`);
   } catch(e) { toast("❌ " + e.message); }
 }
 async function saveNotes(mid) {

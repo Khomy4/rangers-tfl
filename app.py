@@ -133,6 +133,21 @@ def init():
             match_id INTEGER PRIMARY KEY,
             notes TEXT
         )""")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS lineup2(
+            match_id INTEGER,
+            slot TEXT,
+            player_id INTEGER,
+            PRIMARY KEY(match_id, slot)
+        )""")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS lineup_subs2(
+            match_id INTEGER,
+            slot TEXT,
+            sub_index INTEGER,
+            player_id INTEGER,
+            PRIMARY KEY(match_id, slot, sub_index)
+        )""")
         # Safe migrations — run every startup, idempotent
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS approved INTEGER DEFAULT 0")
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS position TEXT DEFAULT ''")
@@ -268,7 +283,8 @@ class VoteIn(BaseModel):
 
 class LineupIn(BaseModel):
     lineup: dict  # {slot: player_id or None}
-    subs: Optional[dict] = None  # {slot: [pid1, pid2]}
+    subs: Optional[dict] = None  # {slot: [pid, ...]}
+    team_num: Optional[int] = 1  # 1 or 2
 
 class NotesIn(BaseModel):
     notes: str
@@ -503,19 +519,29 @@ def match_detail(mid: int, request: Request):
         c.execute("SELECT slot, player_id FROM lineup WHERE match_id=?", (mid,))
         d["lineup"] = {r["slot"]: r["player_id"] for r in c.fetchall()}
 
-        # Subs
-        c.execute("SELECT slot, sub_index, player_id FROM lineup_subs WHERE match_id=?", (mid,))
+        # Subs team 1
+        c.execute("SELECT slot, sub_index, player_id FROM lineup_subs WHERE match_id=%s ORDER BY slot, sub_index", (mid,))
         subs_raw = c.fetchall()
         d["subs"] = {}
         for r in subs_raw:
             sl = r["slot"]
             if sl not in d["subs"]:
-                d["subs"][sl] = [None, None]
-            idx = r["sub_index"] - 1
-            if 0 <= idx <= 1:
-                d["subs"][sl][idx] = r["player_id"]
+                d["subs"][sl] = []
+            d["subs"][sl].append(r["player_id"])
+        # Lineup team 2
+        c.execute("SELECT slot, player_id FROM lineup2 WHERE match_id=%s", (mid,))
+        d["lineup2"] = {r["slot"]: r["player_id"] for r in c.fetchall()}
+        # Subs team 2
+        c.execute("SELECT slot, sub_index, player_id FROM lineup_subs2 WHERE match_id=%s ORDER BY slot, sub_index", (mid,))
+        subs2_raw = c.fetchall()
+        d["subs2"] = {}
+        for r in subs2_raw:
+            sl = r["slot"]
+            if sl not in d["subs2"]:
+                d["subs2"][sl] = []
+            d["subs2"][sl].append(r["player_id"])
         # Notes
-        c.execute("SELECT notes FROM match_notes WHERE match_id=?", (mid,))
+        c.execute("SELECT notes FROM match_notes WHERE match_id=%s", (mid,))
         nrow = c.fetchone()
         d["notes"] = nrow["notes"] if nrow else ""
 
@@ -695,29 +721,28 @@ def save_lineup(mid: int, x: LineupIn, request: Request):
     p = get_player(request)
     if not is_captain(p):
         raise HTTPException(403)
+    t = x.team_num or 1
+    tbl = "lineup2" if t == 2 else "lineup"
+    subs_tbl = "lineup_subs2" if t == 2 else "lineup_subs"
     with db() as c:
         for slot, pid in x.lineup.items():
             if pid:
                 c.execute(
-                    """INSERT INTO lineup(match_id,slot,player_id) VALUES(?,?,?)
+                    f"""INSERT INTO {tbl}(match_id,slot,player_id) VALUES(%s,%s,%s)
                        ON CONFLICT(match_id,slot) DO UPDATE SET player_id=EXCLUDED.player_id""",
                     (mid, slot, int(pid))
                 )
             else:
-                c.execute("DELETE FROM lineup WHERE match_id=? AND slot=?", (mid, slot))
-        if x.subs:
+                c.execute(f"DELETE FROM {tbl} WHERE match_id=%s AND slot=%s", (mid, slot))
+        if x.subs is not None:
+            # Delete all existing subs for this match/team, then reinsert
+            c.execute(f"DELETE FROM {subs_tbl} WHERE match_id=%s", (mid,))
             for slot, sub_list in x.subs.items():
-                for idx, pid in enumerate((sub_list or [])[:2], 1):
+                for idx, pid in enumerate(sub_list or [], 1):
                     if pid:
                         c.execute(
-                            """INSERT INTO lineup_subs(match_id,slot,sub_index,player_id) VALUES(?,?,?,?)
-                               ON CONFLICT(match_id,slot,sub_index) DO UPDATE SET player_id=EXCLUDED.player_id""",
+                            f"INSERT INTO {subs_tbl}(match_id,slot,sub_index,player_id) VALUES(%s,%s,%s,%s)",
                             (mid, slot, idx, int(pid))
-                        )
-                    else:
-                        c.execute(
-                            "DELETE FROM lineup_subs WHERE match_id=? AND slot=? AND sub_index=?",
-                            (mid, slot, idx)
                         )
     return {"ok": True}
 
