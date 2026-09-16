@@ -151,8 +151,6 @@ def init():
         # Safe migrations — run every startup, idempotent
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS approved INTEGER DEFAULT 0")
         c.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS position TEXT DEFAULT ''")
-        # Close voting for any scored match that was left open (e.g. after a bug)
-        c.execute("UPDATE matches SET voting_closed=1 WHERE gf IS NOT NULL AND voting_closed=0")
 
         if CAPTAIN_ID:
             c.execute("UPDATE players SET approved=1 WHERE telegram_id=?", (CAPTAIN_ID,))
@@ -575,8 +573,6 @@ def add_match(x: MatchIn, request: Request):
             (x.season_id or 1, x.opponent, x.match_date, x.rsvp_deadline),
         )
         row = c.fetchone()
-        # Auto-close voting on all previously scored matches
-        c.execute("UPDATE matches SET voting_closed=1 WHERE gf IS NOT NULL AND voting_closed=0")
         return {"id": row["id"]}
 
 
@@ -719,8 +715,6 @@ def vote(mid: int, x: VoteIn, request: Request):
         mvp_n = c.fetchone()["n"]
         c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='defense'", (mid,))
         def_n = c.fetchone()["n"]
-        if played_n > 0 and mvp_n >= played_n and def_n >= played_n:
-            c.execute("UPDATE matches SET voting_closed=1 WHERE id=?", (mid,))
     return {"ok": True}
 
 
