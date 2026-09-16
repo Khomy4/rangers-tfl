@@ -480,17 +480,24 @@ def match_detail(mid: int, request: Request):
         for v in all_votes:
             bucket = mvp_votes if v["vtype"] == "mvp" else def_votes
             bucket[v["target_id"]] = bucket.get(v["target_id"], 0) + 1
-        mvp_winner = max(mvp_votes, key=mvp_votes.get) if mvp_votes else None
-        def_winner = max(def_votes, key=def_votes.get) if def_votes else None
+        def top_ids(votes_dict):
+            """Return set of all ids tied at the highest vote count."""
+            if not votes_dict:
+                return set()
+            top = max(votes_dict.values())
+            return {pid for pid, cnt in votes_dict.items() if cnt == top}
+
+        mvp_winners = top_ids(mvp_votes)
+        def_winners = top_ids(def_votes)
 
         d["stats"] = []
         for pl in all_players:
             st = stats_map.get(pl["id"])
             if not st:
                 continue
-            # MVP/defense points only count if voting is closed
-            mvp_pts = 3 if (m["voting_closed"] and pl["id"] == mvp_winner) else 0
-            def_pts = 2 if (m["voting_closed"] and pl["id"] == def_winner) else 0
+            # MVP/defense points only count if voting is closed; all tied winners get points
+            mvp_pts = 3 if (m["voting_closed"] and pl["id"] in mvp_winners) else 0
+            def_pts = 2 if (m["voting_closed"] and pl["id"] in def_winners) else 0
             pts = st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts
             d["stats"].append({
                 "player_id": pl["id"],
@@ -500,8 +507,8 @@ def match_detail(mid: int, request: Request):
                 "goals": st["goals"],
                 "assists": st["assists"],
                 "keeper_points": st["keeper_points"],
-                "is_mvp": m["voting_closed"] and pl["id"] == mvp_winner,
-                "is_best_defense": m["voting_closed"] and pl["id"] == def_winner,
+                "is_mvp": m["voting_closed"] and pl["id"] in mvp_winners,
+                "is_best_defense": m["voting_closed"] and pl["id"] in def_winners,
                 "points": pts,
             })
 
