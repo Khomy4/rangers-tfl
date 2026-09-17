@@ -133,6 +133,8 @@ def init():
             match_id INTEGER PRIMARY KEY,
             notes TEXT
         )""")
+        # Add discipline_ok column if not exists
+        c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS discipline_ok INTEGER DEFAULT NULL")
         c.execute("""
         CREATE TABLE IF NOT EXISTS match_formation(
             match_id INTEGER,
@@ -223,27 +225,22 @@ def result_bonus(gf, ga) -> int:
 
 
 def calc_finance(c: Cur, mid: int) -> dict:
-    c.execute("SELECT * FROM matches WHERE id=?", (mid,))
+    c.execute("SELECT * FROM matches WHERE id=%s", (mid,))
     m = c.fetchone()
     if not m:
         return {}
-    # Exclude Босс from discipline calculations
-    c.execute(
-        "SELECT COUNT(*) AS n FROM players WHERE approved=1 AND COALESCE(position,'') != 'Босс'"
-    )
-    total_players = c.fetchone()["n"]
-    c.execute("SELECT COUNT(*) AS n FROM rsvp WHERE match_id=? AND on_time=1", (mid,))
-    on_time_replies = c.fetchone()["n"]
-    c.execute("""
-        SELECT COUNT(*) AS n FROM rsvp r
-        LEFT JOIN stats s ON s.match_id=r.match_id AND s.player_id=r.player_id
-        WHERE r.match_id=? AND r.status='yes' AND COALESCE(s.played,0)=0
-    """, (mid,))
-    no_show = c.fetchone()["n"]
-    disc = 300 if total_players > 0 and on_time_replies == total_players and no_show == 0 else 0
+    disc_ok = m.get("discipline_ok")
+    if disc_ok is None:
+        disc = 0
+        disc_pending = True
+    else:
+        disc = 300 if disc_ok else 0
+        disc_pending = False
     rb = result_bonus(m["gf"], m["ga"])
     return {
         "discipline": disc,
+        "discipline_ok": disc_ok,   # None=pending, 1=yes, 0=no
+        "discipline_pending": disc_pending,
         "result": rb,
         "team_bank": disc + rb,
         "personal_fund": 600 if m["gf"] is not None else 0,
@@ -779,6 +776,22 @@ def save_formation(mid: int, x: FormationIn, request: Request):
             """INSERT INTO match_formation(match_id,team_num,formation) VALUES(%s,%s,%s)
                ON CONFLICT(match_id,team_num) DO UPDATE SET formation=EXCLUDED.formation""",
             (mid, t, x.formation)
+        )
+    return {"ok": True}
+
+
+class DisciplineIn(BaseModel):
+    ok: bool
+
+@app.post("/api/matches/{mid}/discipline")
+def set_discipline(mid: int, x: DisciplineIn, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        c.execute(
+            "UPDATE matches SET discipline_ok=%s WHERE id=%s",
+            (1 if x.ok else 0, mid)
         )
     return {"ok": True}
 

@@ -318,6 +318,40 @@ async function boot() {
   }
 }
 
+
+function disciplineHtml(m) {
+  if (!m.finance || m.finance.discipline === undefined) return "";
+  // Only show section if match has a score
+  if (m.gf === null) return "";
+  const f = m.finance;
+  const ok = f.discipline_ok;  // null=pending, 1=yes, 0=no
+  const isCap = S.me && S.me.captain;
+  const statusHtml = ok === 1
+    ? `<span style="color:#22c55e;font-weight:700">✅ Соблюдена (+300 ₽)</span>`
+    : ok === 0
+    ? `<span style="color:#e05060;font-weight:700">❌ Не соблюдена (0 ₽)</span>`
+    : `<span style="color:#888">⏳ Не подтверждена капитаном</span>`;
+  const btnHtml = isCap ? `
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button onclick="setDiscipline(${m.id},true)" style="flex:1;padding:8px;border-radius:10px;border:none;background:${ok===1?'#22c55e':'#1a3a1a'};color:${ok===1?'#000':'#22c55e'};font-weight:700;cursor:pointer;font-size:13px">✅ Соблюдена</button>
+      <button onclick="setDiscipline(${m.id},false)" style="flex:1;padding:8px;border-radius:10px;border:none;background:${ok===0?'#e05060':'#3a1a1a'};color:${ok===0?'#fff':'#e05060'};font-weight:700;cursor:pointer;font-size:13px">❌ Нарушена</button>
+    </div>` : "";
+  return `
+<div class="sect">Дисциплина</div>
+<div class="card" style="padding:14px">
+  <div style="font-size:13px;color:#999;margin-bottom:6px">Соблюдены ли правила дисциплины?</div>
+  <div style="font-size:14px">${statusHtml}</div>
+  ${btnHtml}
+</div>`;
+}
+
+async function setDiscipline(mid, ok) {
+  try {
+    await api(`/api/matches/${mid}/discipline`, {method:"POST", body:JSON.stringify({ok})});
+    await renderDetail(mid);
+  } catch(e) { toast("❌ " + e.message); }
+}
+
 // ── MATCHES ───────────────────────────────────────────────────────────────────
 function dlBar(m) {
   if (!m.rsvp_deadline) return "";
@@ -431,6 +465,8 @@ async function renderDetail(mid) {
   ` : `<div style="font-size:32px;font-weight:900;color:#333;padding:14px 0">—</div>`}
   ${dlBar(m)}
 </div>
+
+${disciplineHtml(m)}
 
 ${lineupHtml(m)}
 
@@ -979,8 +1015,8 @@ const FORMATIONS = {
       gk:  {abbr:"ВР", l:"50%", t:"88%", keeper:true, lbl:"Вратарь"},
       cb1: {abbr:"ЛЗ", l:"28%", t:"70%", lbl:"Левый защитник"},
       cb2: {abbr:"ПЗ", l:"72%", t:"70%", lbl:"Правый защитник"},
-      cm:  {abbr:"ЛП", l:"33%", t:"47%", lbl:"Левый полузащитник"},
-      lw:  {abbr:"ПП", l:"67%", t:"47%", lbl:"Правый полузащитник"},
+      cm:  {abbr:"ЛП", l:"14%", t:"47%", lbl:"Левый полузащитник"},
+      lw:  {abbr:"ПП", l:"86%", t:"47%", lbl:"Правый полузащитник"},
       rw:  {abbr:"ЦН", l:"50%", t:"26%", lbl:"Центральный нападающий"},
     }
   }
