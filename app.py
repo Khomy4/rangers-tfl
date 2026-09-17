@@ -134,6 +134,13 @@ def init():
             notes TEXT
         )""")
         c.execute("""
+        CREATE TABLE IF NOT EXISTS match_formation(
+            match_id INTEGER,
+            team_num INTEGER NOT NULL DEFAULT 1,
+            formation TEXT NOT NULL DEFAULT '2-1-2',
+            PRIMARY KEY(match_id, team_num)
+        )""")
+        c.execute("""
         CREATE TABLE IF NOT EXISTS lineup2(
             match_id INTEGER,
             slot TEXT,
@@ -287,6 +294,10 @@ class LineupIn(BaseModel):
 
 class NotesIn(BaseModel):
     notes: str
+
+class FormationIn(BaseModel):
+    formation: str  # '2-1-2' or '2-2-1'
+    team_num: Optional[int] = 1
 
 class PositionIn(BaseModel):
     position: str
@@ -546,6 +557,12 @@ def match_detail(mid: int, request: Request):
             if sl not in d["subs2"]:
                 d["subs2"][sl] = []
             d["subs2"][sl].append(r["player_id"])
+        # Formation
+        c.execute("SELECT team_num, formation FROM match_formation WHERE match_id=%s", (mid,))
+        fm_rows = c.fetchall()
+        fm_map = {r["team_num"]: r["formation"] for r in fm_rows}
+        d["formation"]  = fm_map.get(1, "2-1-2")
+        d["formation2"] = fm_map.get(2, "2-1-2")
         # Notes
         c.execute("SELECT notes FROM match_notes WHERE match_id=%s", (mid,))
         nrow = c.fetchone()
@@ -748,6 +765,22 @@ def save_lineup(mid: int, x: LineupIn, request: Request):
                         )
     return {"ok": True}
 
+
+@app.post("/api/matches/{mid}/formation")
+def save_formation(mid: int, x: FormationIn, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    if x.formation not in ("2-1-2", "2-2-1"):
+        raise HTTPException(400, "invalid formation")
+    t = x.team_num or 1
+    with db() as c:
+        c.execute(
+            """INSERT INTO match_formation(match_id,team_num,formation) VALUES(%s,%s,%s)
+               ON CONFLICT(match_id,team_num) DO UPDATE SET formation=EXCLUDED.formation""",
+            (mid, t, x.formation)
+        )
+    return {"ok": True}
 
 @app.post("/api/matches/{mid}/notes")
 def save_notes(mid: int, x: NotesIn, request: Request):

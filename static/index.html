@@ -162,6 +162,10 @@ input,select,option{font-family:inherit;outline:none}
 .team-sw{display:flex;gap:2px;background:#111;border-radius:8px;padding:3px;flex-shrink:0}
 .team-sw-btn{width:30px;height:24px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;border-radius:6px;cursor:pointer;color:#666;transition:background .15s,color .15s;user-select:none}
 .team-sw-btn.active{background:#4a9a40;color:#fff}
+/* Formation switcher */
+.fm-sw{display:flex;gap:2px;background:#111;border-radius:8px;padding:3px;flex-shrink:0}
+.fm-sw-btn{height:24px;padding:0 7px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border-radius:6px;cursor:pointer;color:#666;transition:background .15s,color .15s;user-select:none;white-space:nowrap}
+.fm-sw-btn.active{background:#3a7ac0;color:#fff}
 /* Position info sheet */
 .pi-overlay{position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.65);display:none;align-items:flex-end}
 .pi-overlay.open{display:flex}
@@ -390,7 +394,7 @@ async function renderDetail(mid) {
   el.innerHTML = `<div class="loading">Загрузка...</div>`;
   try {
     const m = await api(`/api/matches/${mid}`);
-    initLP(m.lineup, m.subs, m.lineup2||{}, m.subs2||{}, m.notes);
+    initLP(m.lineup, m.subs, m.lineup2||{}, m.subs2||{}, m.notes, m.formation, m.formation2);
     const scored = m.gf !== null;
     const dt = new Date(m.match_date);
     const dateStr = dt.toLocaleDateString("ru-RU",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
@@ -957,21 +961,43 @@ let lpSubs   = lpData[1].subs;
 let lpState  = {slot:null, mid:null, subIdx:null};
 let lpNotes = "";
 let piMode = null; // 'main'|'sub0'|'sub1'
-const LP_SLOTS = {
-  gk: {abbr:"ВР",l:"50%",t:"88%",keeper:true,lbl:"Вратарь (ВР)"},
-  cb1:{abbr:"ЦЗ",l:"28%",t:"70%",lbl:"Центральный защитник"},
-  cb2:{abbr:"ЦЗ",l:"72%",t:"70%",lbl:"Центральный защитник"},
-  cm: {abbr:"ЦП",l:"50%",t:"52%",lbl:"Центральный полузащитник"},
-  lw: {abbr:"ЛП",l:"28%",t:"32%",lbl:"Левый полузащитник"},
-  rw: {abbr:"ПП",l:"72%",t:"32%",lbl:"Правый полузащитник"},
+const FORMATIONS = {
+  "2-1-2": {
+    label: "2–1–2",
+    slots: {
+      gk:  {abbr:"ВР", l:"50%", t:"88%", keeper:true, lbl:"Вратарь"},
+      cb1: {abbr:"ЛЗ", l:"28%", t:"70%", lbl:"Левый защитник"},
+      cb2: {abbr:"ПЗ", l:"72%", t:"70%", lbl:"Правый защитник"},
+      cm:  {abbr:"ЦП", l:"50%", t:"52%", lbl:"Центральный полузащитник"},
+      lw:  {abbr:"ЛП", l:"28%", t:"32%", lbl:"Левый полузащитник"},
+      rw:  {abbr:"ПП", l:"72%", t:"32%", lbl:"Правый полузащитник"},
+    }
+  },
+  "2-2-1": {
+    label: "2–2–1",
+    slots: {
+      gk:  {abbr:"ВР", l:"50%", t:"88%", keeper:true, lbl:"Вратарь"},
+      cb1: {abbr:"ЛЗ", l:"28%", t:"70%", lbl:"Левый защитник"},
+      cb2: {abbr:"ПЗ", l:"72%", t:"70%", lbl:"Правый защитник"},
+      cm:  {abbr:"ЛП", l:"33%", t:"47%", lbl:"Левый полузащитник"},
+      lw:  {abbr:"ПП", l:"67%", t:"47%", lbl:"Правый полузащитник"},
+      rw:  {abbr:"ЦН", l:"50%", t:"26%", lbl:"Центральный нападающий"},
+    }
+  }
 };
+let LP_SLOTS = FORMATIONS["2-1-2"].slots;
+let lpFormation = {1:"2-1-2", 2:"2-1-2"};
 
-function initLP(s1, sub1, s2, sub2, notes) {
+function initLP(s1, sub1, s2, sub2, notes, form1, form2) {
   lpNotes = notes || "";
+  lpFormation = {1: form1||"2-1-2", 2: form2||"2-1-2"};
+  LP_SLOTS = FORMATIONS[lpFormation[1]].slots;
+  // init data for all slots of BOTH formations so no key is ever missing
+  const allSlots = Object.keys(FORMATIONS["2-1-2"].slots);
   [1,2].forEach(t => {
     const sl_map = t===1 ? (s1||{}) : (s2||{});
     const sb_map = t===1 ? (sub1||{}) : (sub2||{});
-    Object.keys(LP_SLOTS).forEach(sl => {
+    allSlots.forEach(sl => {
       lpData[t].lineup[sl] = sl_map[sl] || null;
       lpData[t].subs[sl]   = Array.isArray(sb_map[sl]) ? [...sb_map[sl]] : [];
     });
@@ -979,17 +1005,39 @@ function initLP(s1, sub1, s2, sub2, notes) {
   lpTeam   = 1;
   lpLineup = lpData[1].lineup;
   lpSubs   = lpData[1].subs;
+  setTimeout(() => updateFmUI(lpFormation[1]), 0);
 }
 function switchTeam(t) {
   if (lpTeam === t) return;
   lpTeam   = t;
   lpLineup = lpData[t].lineup;
   lpSubs   = lpData[t].subs;
+  LP_SLOTS = FORMATIONS[lpFormation[t]].slots;
   document.querySelectorAll(".team-sw-btn").forEach(b => b.classList.toggle("active", +b.dataset.t === t));
+  updateFmUI(lpFormation[t]);
   renderPitchTokens();
   // rebuild notes textarea if visible
   const ta = document.getElementById("notesTA");
   if (ta) ta.value = lpNotes;
+}
+function updateFmUI(fm) {
+  document.querySelectorAll(".fm-sw-btn").forEach(b => b.classList.toggle("active", b.dataset.f === fm));
+  const lbl = document.getElementById("fmLabel");
+  if (lbl) lbl.textContent = FORMATIONS[fm].label;
+}
+async function switchFormation(f) {
+  if (lpFormation[lpTeam] === f) return;
+  lpFormation[lpTeam] = f;
+  LP_SLOTS = FORMATIONS[f].slots;
+  updateFmUI(f);
+  renderPitchTokens();
+  // save to server
+  const mid = lpState.mid || window._lpMid;
+  if (mid) {
+    try {
+      await api(\`/api/matches/\${mid}/formation\`,{method:"POST",body:JSON.stringify({formation:f,team_num:lpTeam})});
+    } catch(e) { toast("❌ Ошибка сохранения схемы: " + e.message); }
+  }
 }
 
 function subBadgeSvg(){
@@ -998,7 +1046,9 @@ function subBadgeSvg(){
 function renderPitchTokens() {
   const pm = {};
   S.players.forEach(p => pm[p.id] = p);
+  const mid = window._lpMid;
   Object.keys(LP_SLOTS).forEach(slot => {
+    const pte = document.getElementById("lppt-"+slot);
     const ce = document.getElementById("lpc-"+slot);
     const ne = document.getElementById("lpn-"+slot);
     const sbe = document.getElementById("lpsb-"+slot);
@@ -1006,6 +1056,17 @@ function renderPitchTokens() {
     const pid = lpLineup[slot];
     const pl = pid ? pm[pid] : null;
     const sl = LP_SLOTS[slot];
+    // update position
+    if (pte) {
+      pte.style.left = sl.l;
+      pte.style.top  = sl.t;
+      if (S.me && S.me.captain) {
+        pte.onclick = pid
+          ? () => openPosInfo(slot, mid)
+          : () => openLP(slot, mid);
+        pte.style.cursor = "pointer";
+      }
+    }
     ce.className = "pt-c " + (pl ? (sl.keeper ? "gk" : "out") : "emp");
     ce.textContent = pid ? initials(pl.name) : sl.abbr;
     ne.textContent = pl ? pl.name.split(" ")[0] : "—";
@@ -1024,6 +1085,7 @@ function lineupHtml(m) {
   const hasLineup = Object.values(lpLineup).some(Boolean);
   if (!S.me.captain && !hasLineup) return "";
   const mid = m.id;
+  window._lpMid = mid;
   const pm = {};
   S.players.forEach(p => pm[p.id] = p);
   const tokens = Object.entries(LP_SLOTS).map(([slot, sl]) => {
@@ -1034,7 +1096,7 @@ function lineupHtml(m) {
       ? (pid ? `openPosInfo('${slot}',${mid})` : `openLP('${slot}',${mid})`)
       : (pid ? `openPosInfo('${slot}',${mid})` : "");
     const click = clickFn ? `onclick="${clickFn}" style="cursor:pointer"` : "";
-    return `<div class="pt" style="left:${sl.l};top:${sl.t}" ${click}>
+    return `<div class="pt" id="lppt-${slot}" style="left:${sl.l};top:${sl.t}" ${click}>
       <div class="pt-c ${cls}" id="lpc-${slot}">${pid ? initials(pl.name) : sl.abbr}</div>
       <div class="sub-badges" id="lpsb-${slot}"></div>
       <div class="pt-n" id="lpn-${slot}">${pl ? pl.name.split(" ")[0] : "—"}</div>
@@ -1050,7 +1112,11 @@ function lineupHtml(m) {
         <div class="team-sw-btn active" data-t="1" onclick="switchTeam(1)">1</div>
         <div class="team-sw-btn" data-t="2" onclick="switchTeam(2)">2</div>
       </div>
-      <span style="font-size:11px;color:#555;background:#222;border-radius:6px;padding:3px 8px">1–2–1–2</span>
+      <div class="fm-sw" id="fmSw">
+        <div class="fm-sw-btn active" data-f="2-1-2" onclick="switchFormation('2-1-2')">2–1–2</div>
+        <div class="fm-sw-btn" data-f="2-2-1" onclick="switchFormation('2-2-1')">2–2–1</div>
+      </div>
+      <span id="fmLabel" style="display:none"></span>
     </div>
   </div>
   <div class="pitch2">
