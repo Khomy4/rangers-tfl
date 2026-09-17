@@ -1035,7 +1035,7 @@ async function switchFormation(f) {
   const mid = lpState.mid || window._lpMid;
   if (mid) {
     try {
-      await api(\`/api/matches/\${mid}/formation\`,{method:"POST",body:JSON.stringify({formation:f,team_num:lpTeam})});
+      await api(`/api/matches/${mid}/formation`,{method:"POST",body:JSON.stringify({formation:f,team_num:lpTeam})});
     } catch(e) { toast("❌ Ошибка сохранения схемы: " + e.message); }
   }
 }
