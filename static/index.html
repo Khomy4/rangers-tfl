@@ -6,50 +6,6 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Rangers TFL</title>
 <script src="https://telegram.org/js/telegram-web-app.js">
-function voteAdminHtml(m) {
-  if (!S.me?.captain || m.gf === null) return "";
-  const players = (m.stats || []).filter(s => s.played);
-  if (!players.length) return "";
-  const ov = m.vote_overrides || {};
-  const rows = players.map(p => {
-    const cur = ov[p.player_id] || {mvp:0,defense:0};
-    return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #1e1e1e">
-      <div style="flex:1;font-size:13px">${esc(p.name)}</div>
-      <input type="number" min="0" max="99" value="${cur.mvp}" id="vov-mvp-${p.player_id}"
-        style="width:38px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:2px 4px;text-align:center">
-      <input type="number" min="0" max="99" value="${cur.defense}" id="vov-def-${p.player_id}"
-        style="width:38px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:2px 4px;text-align:center">
-    </div>`;
-  }).join("");
-  return `
-<div class="sect">✏️ Редактор голосов</div>
-<div class="card" style="padding:12px">
-  <div style="font-size:11px;color:#666;margin-bottom:8px">Ручное переопределение (заменяет реальные голоса)</div>
-  <div style="display:flex;justify-content:flex-end;gap:4px;margin-bottom:4px;font-size:10px;color:#555">
-    <span style="width:38px;text-align:center">⭐MVP</span>
-    <span style="width:38px;text-align:center">🛡Защ</span>
-  </div>
-  ${rows}
-  <button onclick="saveVoteAdmin(${m.id},[${players.map(p=>p.player_id).join(',')}])"
-    style="margin-top:10px;width:100%;padding:8px;background:#1e3a1e;border:1px solid #22c55e;border-radius:8px;color:#22c55e;font-size:13px;font-weight:600">
-    💾 Сохранить голоса
-  </button>
-</div>`;
-}
-
-async function saveVoteAdmin(mid, playerIds) {
-  const overrides = playerIds.map(pid => ({
-    player_id: pid,
-    mvp: parseInt(document.getElementById(`vov-mvp-${pid}`)?.value||"0")||0,
-    defense: parseInt(document.getElementById(`vov-def-${pid}`)?.value||"0")||0,
-  }));
-  try {
-    await api(`/api/matches/${mid}/votes/admin`,{method:"POST",body:JSON.stringify({overrides})});
-    toast("✅ Голоса сохранены");
-    await renderDetail(mid);
-  } catch(e) { toast("❌ "+e.message); }
-}
-
 </script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -1383,6 +1339,50 @@ async function saveNotes(mid) {
 }
 
 boot();
+function voteAdminHtml(m) {
+  if (!S.me?.captain || m.gf === null) return "";
+  const players = (m.stats || []).filter(s => s.played);
+  if (!players.length) return "";
+  const ov = m.vote_overrides || {};
+  const rows = players.map(p => {
+    const cur = ov[p.player_id] || {mvp:0,defense:0};
+    return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #1e1e1e">
+      <div style="flex:1;font-size:13px">${esc(p.name)}</div>
+      <input type="number" min="0" max="99" value="${cur.mvp}" id="vov-mvp-${p.player_id}"
+        style="width:38px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:2px 4px;text-align:center">
+      <input type="number" min="0" max="99" value="${cur.defense}" id="vov-def-${p.player_id}"
+        style="width:38px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:2px 4px;text-align:center">
+    </div>`;
+  }).join("");
+  return `
+<div class="sect">✏️ Редактор голосов</div>
+<div class="card" style="padding:12px">
+  <div style="font-size:11px;color:#666;margin-bottom:8px">Ручное переопределение (заменяет реальные голоса)</div>
+  <div style="display:flex;justify-content:flex-end;gap:4px;margin-bottom:4px;font-size:10px;color:#555">
+    <span style="width:38px;text-align:center">⭐MVP</span>
+    <span style="width:38px;text-align:center">🛡Защ</span>
+  </div>
+  ${rows}
+  <button onclick="saveVoteAdmin(${m.id},[${players.map(p=>p.player_id).join(',')}])"
+    style="margin-top:10px;width:100%;padding:8px;background:#1e3a1e;border:1px solid #22c55e;border-radius:8px;color:#22c55e;font-size:13px;font-weight:600">
+    💾 Сохранить голоса
+  </button>
+</div>`;
+}
+
+async function saveVoteAdmin(mid, playerIds) {
+  const overrides = playerIds.map(pid => ({
+    player_id: pid,
+    mvp: parseInt(document.getElementById(`vov-mvp-${pid}`)?.value||"0")||0,
+    defense: parseInt(document.getElementById(`vov-def-${pid}`)?.value||"0")||0,
+  }));
+  try {
+    await api(`/api/matches/${mid}/votes/admin`,{method:"POST",body:JSON.stringify({overrides})});
+    toast("✅ Голоса сохранены");
+    await renderDetail(mid);
+  } catch(e) { toast("❌ "+e.message); }
+}
+
 </script>
 </body>
 </html>
