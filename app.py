@@ -138,7 +138,16 @@ def init():
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS yellow_card INTEGER DEFAULT 0")
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS red_card INTEGER DEFAULT 0")
         c.execute("""
-        CREATE TABLE IF NOT EXISTS match_formation(
+        CREATE TABLE IF NOT EXISTS vote_override(
+            match_id INTEGER,
+            player_id INTEGER,
+            vtype TEXT,
+            count INTEGER DEFAULT 0,
+            PRIMARY KEY(match_id, player_id, vtype)
+        )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS match_formation(
             match_id INTEGER,
             team_num INTEGER NOT NULL DEFAULT 1,
             formation TEXT NOT NULL DEFAULT '2-1-2',
@@ -491,6 +500,15 @@ def match_detail(mid: int, request: Request):
         for v in all_votes:
             bucket = mvp_votes if v["vtype"] == "mvp" else def_votes
             bucket[v["target_id"]] = bucket.get(v["target_id"], 0) + 1
+        # Apply captain overrides if any
+        c.execute("SELECT player_id, vtype, count FROM vote_override WHERE match_id=?", (mid,))
+        ov_rows = c.fetchall()
+        if ov_rows:
+            mvp_votes, def_votes = {}, {}
+            for ov in ov_rows:
+                if ov["count"] > 0:
+                    (mvp_votes if ov["vtype"] == "mvp" else def_votes)[ov["player_id"]] = ov["count"]
+
         def top_ids(votes_dict):
             """Return set of all ids tied at the highest vote count."""
             if not votes_dict:
@@ -579,6 +597,10 @@ def match_detail(mid: int, request: Request):
                 items = [{"id": k, "name": name_map.get(k, "?"), "count": v} for k, v in vdict.items()]
                 return sorted(items, key=lambda x: -x["count"])
             d["vote_counts"] = {"mvp": breakdown(mvp_votes), "defense": breakdown(def_votes)}
+            ov_map = {}
+            for ov in ov_rows:
+                ov_map.setdefault(ov["player_id"], {"mvp": 0, "defense": 0})[ov["vtype"]] = ov["count"]
+            d["vote_overrides"] = ov_map
 
         return d
 
@@ -818,6 +840,27 @@ def save_notes(mid: int, x: NotesIn, request: Request):
         )
     return {"ok": True}
 
+
+class VoteAdminIn(BaseModel):
+    overrides: list[dict]
+
+@app.post("/api/matches/{mid}/votes/admin")
+def set_vote_admin(mid: int, x: VoteAdminIn, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        c.execute("DELETE FROM vote_override WHERE match_id=?", (mid,))
+        for item in x.overrides:
+            pid = item.get("player_id")
+            for vtype in ("mvp", "defense"):
+                cnt = int(item.get(vtype, 0) or 0)
+                if cnt > 0:
+                    c.execute(
+                        "INSERT INTO vote_override(match_id,player_id,vtype,count) VALUES(?,?,?,?)",
+                        (mid, pid, vtype, cnt)
+                    )
+    return {"ok": True}
 
 @app.delete("/api/matches/{mid}/vote")
 def reset_vote(mid: int, request: Request):
