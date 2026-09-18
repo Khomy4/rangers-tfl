@@ -501,6 +501,8 @@ ${scored && m.stats.length ? `
         ${s.assists>0?`<span class="chip chip-blue">🎯${s.assists}</span>`:""}
         ${s.keeper_points===3?`<span class="chip chip-gray">🧤сухарь</span>`:""}
         ${s.keeper_points===1?`<span class="chip chip-gray">🧤+1</span>`:""}
+        ${s.yellow_card?`<span class="chip chip-gray" style="color:#f0c030">🟡 -1</span>`:""}
+        ${s.red_card?`<span class="chip chip-gray" style="color:#e05060">🔴 -3</span>`:""}
         ${s.is_mvp?`<span class="chip chip-gold">⭐MVP</span>`:""}
         ${s.is_best_defense?`<span class="chip chip-gold">🛡защита</span>`:""}
       </div>
@@ -748,7 +750,13 @@ ${pending.map(pl=>`
     <option value="1">1–2 пропущено (+1 очко)</option>
     <option value="3">Сухой матч (+3 очка)</option>
   </select>
-  <button class="btn-primary" onclick="saveStat()">Сохранить</button>
+  <label class="form-lbl">Карточка</label>
+  <div style="display:flex;gap:8px">
+    <button id="card-none" onclick="setCard('none')" style="flex:1;padding:8px;border-radius:10px;border:2px solid #333;background:#1a1a1a;color:#aaa;font-weight:700;cursor:pointer;font-size:13px">Нет</button>
+    <button id="card-yellow" onclick="setCard('yellow')" style="flex:1;padding:8px;border-radius:10px;border:2px solid #333;background:#1a1a1a;color:#f0c030;font-weight:700;cursor:pointer;font-size:13px">🟡 Жёлтая</button>
+    <button id="card-red" onclick="setCard('red')" style="flex:1;padding:8px;border-radius:10px;border:2px solid #333;background:#1a1a1a;color:#e05060;font-weight:700;cursor:pointer;font-size:13px">🔴 Красная</button>
+  </div>
+  <button class="btn-primary" style="margin-top:12px" onclick="saveStat()">Сохранить</button>
 </div>
 
 <div class="sect">Закрыть голосование</div>
@@ -869,6 +877,17 @@ async function saveScore() {
   } catch(e) { toast("❌ "+e.message); }
 }
 
+let _cardChoice = "none";
+function setCard(c) {
+  _cardChoice = c;
+  ["none","yellow","red"].forEach(v => {
+    const btn = document.getElementById("card-"+v);
+    if (!btn) return;
+    const active = v === c;
+    btn.style.borderColor = active ? (v==="yellow"?"#f0c030":v==="red"?"#e05060":"#555") : "#333";
+    btn.style.background  = active ? (v==="yellow"?"#3a2e00":v==="red"?"#3a0a10":"#2a2a2a") : "#1a1a1a";
+  });
+}
 async function saveStat() {
   const mid = +document.getElementById("stm").value;
   const pid = +document.getElementById("stpl").value;
@@ -876,9 +895,12 @@ async function saveStat() {
   const goals = +document.getElementById("stgo").value;
   const assists = +document.getElementById("stas").value;
   const kp = +document.getElementById("stkp").value;
+  const yellow_card = _cardChoice === "yellow" ? 1 : 0;
+  const red_card    = _cardChoice === "red"    ? 1 : 0;
   try {
-    await api(`/api/matches/${mid}/stats`,{method:"POST",body:JSON.stringify({player_id:pid,played,goals,assists,keeper_points:kp})});
+    await api(`/api/matches/${mid}/stats`,{method:"POST",body:JSON.stringify({player_id:pid,played,goals,assists,keeper_points:kp,yellow_card,red_card})});
     toast("✅ Статистика сохранена");
+    setCard("none");
     await loadRating();
     if (activePage==="detail"&&detailMatchId===mid) renderDetail(mid);
   } catch(e) { toast("❌ "+e.message); }

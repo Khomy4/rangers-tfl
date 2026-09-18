@@ -135,6 +135,8 @@ def init():
         )""")
         # Add discipline_ok column if not exists
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS discipline_ok INTEGER DEFAULT NULL")
+        c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS yellow_card INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS red_card INTEGER DEFAULT 0")
         c.execute("""
         CREATE TABLE IF NOT EXISTS match_formation(
             match_id INTEGER,
@@ -279,6 +281,8 @@ class StatIn(BaseModel):
     goals: int = 0
     assists: int = 0
     keeper_points: int = 0
+    yellow_card: int = 0
+    red_card: int = 0
 
 class VoteIn(BaseModel):
     vtype: str
@@ -505,7 +509,8 @@ def match_detail(mid: int, request: Request):
             # MVP/defense points only count if voting is closed; all tied winners get points
             mvp_pts = 3 if (m["voting_closed"] and pl["id"] in mvp_winners) else 0
             def_pts = 2 if (m["voting_closed"] and pl["id"] in def_winners) else 0
-            pts = st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts
+            card_pen = st.get("yellow_card",0) * 1 + st.get("red_card",0) * 3
+            pts = st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts - card_pen
             d["stats"].append({
                 "player_id": pl["id"],
                 "name": pl["name"],
@@ -514,6 +519,8 @@ def match_detail(mid: int, request: Request):
                 "goals": st["goals"],
                 "assists": st["assists"],
                 "keeper_points": st["keeper_points"],
+                "yellow_card": st.get("yellow_card", 0),
+                "red_card": st.get("red_card", 0),
                 "is_mvp": m["voting_closed"] and pl["id"] in mvp_winners,
                 "is_best_defense": m["voting_closed"] and pl["id"] in def_winners,
                 "points": pts,
@@ -680,11 +687,14 @@ def save_stats(mid: int, x: StatIn, request: Request):
         raise HTTPException(403)
     with db() as c:
         c.execute(
-            """INSERT INTO stats VALUES(?,?,?,?,?,?)
+            """INSERT INTO stats(match_id,player_id,played,goals,assists,keeper_points,yellow_card,red_card)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT(match_id,player_id) DO UPDATE
                SET played=EXCLUDED.played, goals=EXCLUDED.goals,
-                   assists=EXCLUDED.assists, keeper_points=EXCLUDED.keeper_points""",
-            (mid, x.player_id, x.played, x.goals, x.assists, x.keeper_points),
+                   assists=EXCLUDED.assists, keeper_points=EXCLUDED.keeper_points,
+                   yellow_card=EXCLUDED.yellow_card, red_card=EXCLUDED.red_card""",
+            (mid, x.player_id, x.played, x.goals, x.assists, x.keeper_points,
+             x.yellow_card, x.red_card),
         )
     return {"ok": True}
 
@@ -876,11 +886,25 @@ def leaderboard(request: Request, season_id: Optional[int] = None):
             else:
                 games = goals = assists = kp = mvp = dfn = 0
 
-            pts = goals * 2 + assists + mvp * 3 + dfn * 2 + kp
+            # Card penalties per season
+            if match_ids:
+                ph = ",".join(["%s"] * len(match_ids))
+                c.execute(
+                    f"SELECT COALESCE(SUM(yellow_card),0) AS yc, COALESCE(SUM(red_card),0) AS rc"
+                    f" FROM stats WHERE player_id=%s AND match_id IN ({ph})",
+                    [pl["id"]] + match_ids,
+                )
+                cards = c.fetchone()
+                yc, rc = cards["yc"], cards["rc"]
+            else:
+                yc = rc = 0
+            card_pen = yc * 1 + rc * 3
+            pts = goals * 2 + assists + mvp * 3 + dfn * 2 + kp - card_pen
             rows.append(dict(
                 id=pl["id"], name=pl["name"], position=pl["position"] or "",
                 games=games, total=len(match_ids),
                 goals=goals, assists=assists, mvp=mvp, defense=dfn,
+                yellow_cards=yc, red_cards=rc,
                 points=pts,
             ))
         rows.sort(key=lambda r: (-r["points"], -r["goals"], -r["assists"]))
