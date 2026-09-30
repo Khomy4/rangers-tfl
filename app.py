@@ -473,6 +473,9 @@ def matches(request: Request, season_id: Optional[int] = None):
 @app.get("/api/matches/{mid}")
 def match_detail(mid: int, request: Request):
     p = get_player(request)
+    # Auto-close voting if 24h from match_date have passed
+    with db() as c:
+        maybe_close_voting(c, mid)
     with db() as c:
         c.execute("SELECT * FROM matches WHERE id=?", (mid,))
         m = c.fetchone()
