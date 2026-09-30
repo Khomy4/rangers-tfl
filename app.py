@@ -136,6 +136,7 @@ def init():
         # Add discipline_ok column if not exists
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS discipline_ok INTEGER DEFAULT NULL")
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS yellow_card INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS voting_opened_at TEXT DEFAULT NULL")
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS red_card INTEGER DEFAULT 0")
         c.execute("""
         CREATE TABLE IF NOT EXISTS vote_override(
@@ -525,8 +526,8 @@ def match_detail(mid: int, request: Request):
             if not st:
                 continue
             # MVP/defense points only count if voting is closed; all tied winners get points
-            mvp_pts = 3 if (m["voting_closed"] and pl["id"] in mvp_winners) else 0
-            def_pts = 2 if (m["voting_closed"] and pl["id"] in def_winners) else 0
+            mvp_pts = 3 if (m["voting_closed"] == 1 and pl["id"] in mvp_winners) else 0
+            def_pts = 2 if (m["voting_closed"] == 1 and pl["id"] in def_winners) else 0
             card_pen = st.get("yellow_card",0) * 1 + st.get("red_card",0) * 3
             pts = st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts - card_pen
             d["stats"].append({
@@ -539,8 +540,8 @@ def match_detail(mid: int, request: Request):
                 "keeper_points": st["keeper_points"],
                 "yellow_card": st.get("yellow_card", 0),
                 "red_card": st.get("red_card", 0),
-                "is_mvp": m["voting_closed"] and pl["id"] in mvp_winners,
-                "is_best_defense": m["voting_closed"] and pl["id"] in def_winners,
+                "is_mvp": m["voting_closed"] == 1 and pl["id"] in mvp_winners,
+                "is_best_defense": m["voting_closed"] == 1 and pl["id"] in def_winners,
                 "points": pts,
             })
 
@@ -553,6 +554,8 @@ def match_detail(mid: int, request: Request):
         c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
         eligible_n = c.fetchone()["n"]
         d["vote_progress"] = {"mvp_voted": mvp_voted_n, "def_voted": def_voted_n, "eligible": eligible_n}
+        d["voting_opened_at"] = m.get("voting_opened_at")
+        d["voting_annulled"] = m["voting_closed"] == 2
 
         # Lineup
         c.execute("SELECT slot, player_id FROM lineup WHERE match_id=?", (mid,))
@@ -723,6 +726,36 @@ def save_stats(mid: int, x: StatIn, request: Request):
 
 # ── Votes ─────────────────────────────────────────────────────────────────────
 
+def maybe_close_voting(c, mid: int):
+    """Auto-close voting: immediately if 100% voted, after 24h otherwise.
+    voting_closed: 0=open, 1=closed valid, 2=annulled (<75% in 24h)."""
+    c.execute("SELECT voting_closed, voting_opened_at FROM matches WHERE id=?", (mid,))
+    m = c.fetchone()
+    if not m or m["voting_closed"] != 0:
+        return
+    if not m.get("voting_opened_at"):
+        return
+    from datetime import datetime, timedelta
+    opened_at = datetime.fromisoformat(m["voting_opened_at"])
+    elapsed = datetime.utcnow() - opened_at
+    c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
+    eligible = c.fetchone()["n"]
+    if eligible == 0:
+        return
+    c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='mvp'", (mid,))
+    mvp_n = c.fetchone()["n"]
+    c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='defense'", (mid,))
+    def_n = c.fetchone()["n"]
+    voted = min(mvp_n, def_n)
+    if voted >= eligible:
+        c.execute("UPDATE matches SET voting_closed=1 WHERE id=?", (mid,))
+        return
+    if elapsed.total_seconds() >= 86400:
+        pct = voted / eligible
+        new_status = 1 if pct >= 0.75 else 2
+        c.execute("UPDATE matches SET voting_closed=? WHERE id=?", (new_status, mid))
+
+
 @app.post("/api/matches/{mid}/vote")
 def vote(mid: int, x: VoteIn, request: Request):
     p = get_player(request)
@@ -754,13 +787,12 @@ def vote(mid: int, x: VoteIn, request: Request):
             raise HTTPException(400, "Ты уже проголосовал")
         c.execute("INSERT INTO votes VALUES(?,?,?,?)",
                   (mid, p["id"], x.vtype, x.target_id))
-        # Auto-close if all played players voted for both mvp and defense
-        c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
-        played_n = c.fetchone()["n"]
-        c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='mvp'", (mid,))
-        mvp_n = c.fetchone()["n"]
-        c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='defense'", (mid,))
-        def_n = c.fetchone()["n"]
+        # Record when voting started
+        c.execute(
+            "UPDATE matches SET voting_opened_at=? WHERE id=? AND voting_opened_at IS NULL",
+            (datetime.utcnow().isoformat(), mid)
+        )
+        maybe_close_voting(c, mid)
     return {"ok": True}
 
 
