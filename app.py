@@ -563,7 +563,7 @@ def match_detail(mid: int, request: Request):
         c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
         eligible_n = c.fetchone()["n"]
         d["vote_progress"] = {"mvp_voted": mvp_voted_n, "def_voted": def_voted_n, "eligible": eligible_n}
-        d["voting_opened_at"] = m.get("voting_opened_at")
+        d["voting_opened_at"] = m.get("match_date")  # 24h window starts from match time
         d["voting_annulled"] = m["voting_closed"] == 2
 
         # Lineup
@@ -736,17 +736,20 @@ def save_stats(mid: int, x: StatIn, request: Request):
 # ── Votes ─────────────────────────────────────────────────────────────────────
 
 def maybe_close_voting(c, mid: int):
-    """Auto-close voting: immediately if 100% voted, after 24h otherwise.
+    """Auto-close voting: immediately if 100% voted, after 24h from match_date otherwise.
     voting_closed: 0=open, 1=closed valid, 2=annulled (<75% in 24h)."""
-    c.execute("SELECT voting_closed, voting_opened_at FROM matches WHERE id=?", (mid,))
+    c.execute("SELECT voting_closed, match_date FROM matches WHERE id=?", (mid,))
     m = c.fetchone()
     if not m or m["voting_closed"] != 0:
         return
-    if not m.get("voting_opened_at"):
+    if not m.get("match_date"):
         return
-    from datetime import datetime, timedelta
-    opened_at = datetime.fromisoformat(m["voting_opened_at"])
-    elapsed = datetime.utcnow() - opened_at
+    from datetime import datetime
+    try:
+        match_dt = datetime.fromisoformat(m["match_date"])
+    except Exception:
+        return
+    elapsed = datetime.utcnow() - match_dt
     c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
     eligible = c.fetchone()["n"]
     if eligible == 0:
