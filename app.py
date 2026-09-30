@@ -137,6 +137,15 @@ def init():
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS discipline_ok INTEGER DEFAULT NULL")
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS yellow_card INTEGER DEFAULT 0")
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS voting_opened_at TEXT DEFAULT NULL")
+        # Backfill: start 24h clock now for any active voting that predates this feature
+        c.execute(
+            """
+            UPDATE matches SET voting_opened_at=%s
+            WHERE voting_opened_at IS NULL AND voting_closed=0
+            AND id IN (SELECT DISTINCT match_id FROM votes)
+            """,
+            (datetime.utcnow().isoformat(),)
+        )
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS red_card INTEGER DEFAULT 0")
         c.execute("""
         CREATE TABLE IF NOT EXISTS vote_override(
