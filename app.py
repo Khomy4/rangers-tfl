@@ -579,7 +579,17 @@ def match_detail(mid: int, request: Request):
         c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
         eligible_n = c.fetchone()["n"]
         d["vote_progress"] = {"mvp_voted": mvp_voted_n, "def_voted": def_voted_n, "eligible": eligible_n}
-        d["voting_opened_at"] = m.get("match_date")  # 24h window starts from match time
+        # Compute whether 48h deadline has passed (captain decides to close or annul)
+        voting_expired = False
+        if m.get("match_date") and m["voting_closed"] == 0:
+            from datetime import datetime
+            try:
+                match_dt = datetime.fromisoformat(m["match_date"])
+                voting_expired = (datetime.utcnow() - match_dt).total_seconds() >= 172800
+            except Exception:
+                pass
+        d["voting_expired"] = voting_expired
+        d["voting_opened_at"] = m.get("match_date")
         d["voting_annulled"] = m["voting_closed"] == 2
 
         # Lineup
@@ -693,6 +703,16 @@ def close_voting(mid: int, request: Request):
     return {"ok": True}
 
 
+@app.post("/api/matches/{mid}/annul_voting")
+def annul_voting(mid: int, request: Request):
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        c.execute("UPDATE matches SET voting_closed=2 WHERE id=?", (mid,))
+    return {"ok": True}
+
+
 # ── RSVP ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/matches/{mid}/rsvp")
@@ -752,20 +772,11 @@ def save_stats(mid: int, x: StatIn, request: Request):
 # ── Votes ─────────────────────────────────────────────────────────────────────
 
 def maybe_close_voting(c, mid: int):
-    """Auto-close voting: immediately if 100% voted, after 48h from match_date otherwise.
-    voting_closed: 0=open, 1=closed valid, 2=annulled (<75% in 24h)."""
-    c.execute("SELECT voting_closed, match_date FROM matches WHERE id=?", (mid,))
+    """Auto-close voting only when 100% of players voted for both categories."""
+    c.execute("SELECT voting_closed FROM matches WHERE id=?", (mid,))
     m = c.fetchone()
     if not m or m["voting_closed"] != 0:
         return
-    if not m.get("match_date"):
-        return
-    from datetime import datetime
-    try:
-        match_dt = datetime.fromisoformat(m["match_date"])
-    except Exception:
-        return
-    elapsed = datetime.utcnow() - match_dt
     c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
     eligible = c.fetchone()["n"]
     if eligible == 0:
@@ -774,14 +785,8 @@ def maybe_close_voting(c, mid: int):
     mvp_n = c.fetchone()["n"]
     c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='defense'", (mid,))
     def_n = c.fetchone()["n"]
-    voted = min(mvp_n, def_n)
-    if voted >= eligible:
+    if min(mvp_n, def_n) >= eligible:
         c.execute("UPDATE matches SET voting_closed=1 WHERE id=?", (mid,))
-        return
-    if elapsed.total_seconds() >= 172800:
-        pct = voted / eligible
-        new_status = 1 if pct >= 0.75 else 2
-        c.execute("UPDATE matches SET voting_closed=? WHERE id=?", (new_status, mid))
 
 
 @app.post("/api/matches/{mid}/vote")
@@ -794,6 +799,17 @@ def vote(mid: int, x: VoteIn, request: Request):
             raise HTTPException(404)
         if m["voting_closed"]:
             raise HTTPException(403, "Голосование закрыто")
+        # Block voting after 48h deadline (captain decides manually)
+        if m.get("match_date"):
+            from datetime import datetime
+            try:
+                match_dt = datetime.fromisoformat(m["match_date"])
+                if (datetime.utcnow() - match_dt).total_seconds() >= 172800:
+                    raise HTTPException(403, "Время голосования истекло")
+            except HTTPException:
+                raise
+            except Exception:
+                pass
         if m["gf"] is None:
             raise HTTPException(403, "Матч ещё не сыгран")
         if x.vtype not in ("mvp", "defense"):

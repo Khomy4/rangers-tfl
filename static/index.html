@@ -442,7 +442,7 @@ async function renderDetail(mid) {
     const myStats = m.stats.find(s=>s.player_id===S.me.player.id);
     const myPlayed = myStats?.played === 1;
     const isBoss = S.me.player.position === "Босс";
-    const canVote = scored && (myPlayed || isBoss) && !m.voting_closed && !m.voting_annulled;
+    const canVote = scored && (myPlayed || isBoss) && !m.voting_closed && !m.voting_annulled && !m.voting_expired;
     const playedPlayers = m.stats.filter(s=>s.played && s.player_id!==S.me.player.id);
     const voteOpts = playedPlayers.map(p=>`<option value="${p.player_id}">${esc(p.name)}</option>`).join("");
 
@@ -535,7 +535,7 @@ ${canVote ? `
     </div>
   ` : ""}
 </div>
-` : scored && m.voting_annulled ? `<div class="card-sm" style="font-size:13px;color:#e05060;text-align:center">❌ Голосование аннулировано (проголосовало меньше 75%)</div>` : scored && m.voting_closed ? `<div class="card-sm" style="font-size:13px;color:#666;text-align:center">🔒 Голосование закрыто</div>` : ""}
+` : scored && m.voting_annulled ? `<div class="card-sm" style="font-size:13px;color:#e05060;text-align:center">❌ Голосование аннулировано</div>` : scored && m.voting_closed ? `<div class="card-sm" style="font-size:13px;color:#666;text-align:center">🔒 Голосование закрыто</div>` : ""}
 ${voteAdminHtml(m)}
 
 ${S.me.captain && scored && !m.voting_closed && m.vote_counts ? `
@@ -545,12 +545,14 @@ ${S.me.captain && scored && !m.voting_closed && m.vote_counts ? `
   ${m.voting_opened_at ? (() => {
     const deadline = new Date(new Date(m.voting_opened_at + "Z").getTime() + 172800000);
     const diff = deadline - Date.now();
-    if (diff <= 0) return `<div style="font-size:11px;color:#e05060;margin-bottom:6px">⏱ 48 часов истекло</div>`;
+    if (diff <= 0) return `<div style="font-size:11px;color:#e05060;margin-bottom:6px">⏱ Время вышло — прими решение</div>`;
     const h = Math.floor(diff/3600000), mn = Math.floor((diff%3600000)/60000);
-    const pct = (m.vote_progress.mvp_voted/m.vote_progress.eligible*100).toFixed(0);
-    const col = pct>=75?"#22c55e":pct>=50?"#f59e0b":"#e05060";
-    return `<div style="font-size:11px;margin-bottom:6px"><span style="color:#555">Дедлайн (48ч): </span><span style="color:#aaa">${h}ч ${mn}м</span> — <span style="color:${col}">${pct}% (${pct>=75?"✅ зачтётся":"⚠️ угроза аннулирования"})</span></div>`;
+    return `<div style="font-size:11px;margin-bottom:6px"><span style="color:#555">Дедлайн (48ч): </span><span style="color:#aaa">${h}ч ${mn}м осталось</span></div>`;
   })() : ""}
+  ${m.voting_expired ? `<div style="display:flex;gap:8px;margin-top:8px">
+    <button onclick="captainCloseVoting(${m.id})" style="flex:1;padding:8px;background:#22c55e;color:#000;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">✅ Засчитать</button>
+    <button onclick="captainAnnulVoting(${m.id})" style="flex:1;padding:8px;background:#e05060;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">❌ Аннулировать</button>
+  </div>` : ""}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <div>
       <div style="font-size:11px;font-weight:700;color:#f59e0b;margin-bottom:4px">⭐ MVP</div>
@@ -567,6 +569,24 @@ ${S.me.captain && scored && !m.voting_closed && m.vote_counts ? `
   } catch(e) {
     el.innerHTML=`<div class="empty"><div class="empty-ic">⚠️</div><div class="empty-tx">${esc(e.message)}</div></div>`;
   }
+}
+
+async function captainCloseVoting(mid) {
+  if (!confirm("Засчитать голосование?")) return;
+  try {
+    await api(`/api/matches/${mid}/close_voting`, {method:"POST"});
+    toast("✅ Голосование засчитано");
+    renderDetail(mid);
+  } catch(e) { toast("❌ " + e.message); }
+}
+
+async function captainAnnulVoting(mid) {
+  if (!confirm("Аннулировать голосование?")) return;
+  try {
+    await api(`/api/matches/${mid}/annul_voting`, {method:"POST"});
+    toast("❌ Голосование аннулировано");
+    renderDetail(mid);
+  } catch(e) { toast("❌ " + e.message); }
 }
 
 async function resetMyVote(mid) {
