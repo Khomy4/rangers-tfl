@@ -320,6 +320,11 @@ class VoteIn(BaseModel):
     vtype: str
     target_id: int
 
+class VoteAsIn(BaseModel):
+    voter_id: int      # игрок вместо которого голосуем
+    mvp_target: int    # за кого MVP
+    def_target: int    # за кого защита
+
 class LineupIn(BaseModel):
     lineup: dict  # {slot: player_id or None}
     subs: Optional[dict] = None  # {slot: [pid, ...]}
@@ -639,6 +644,20 @@ def match_detail(mid: int, request: Request):
             for ov in ov_rows:
                 ov_map.setdefault(ov["player_id"], {"mvp": 0, "defense": 0})[ov["vtype"]] = ov["count"]
             d["vote_overrides"] = ov_map
+            # Детальная таблица: кто за кого проголосовал
+            mvp_by_voter = {v["voter_id"]: v["target_id"] for v in all_votes if v["vtype"] == "mvp"}
+            def_by_voter  = {v["voter_id"]: v["target_id"] for v in all_votes if v["vtype"] == "defense"}
+            played_ids = [s["player_id"] for s in stats_map.values() if s.get("played")]
+            d["vote_details"] = [
+                {
+                    "voter_id": pid,
+                    "voter_name": name_map.get(pid, "?"),
+                    "mvp_target": name_map.get(mvp_by_voter.get(pid), "—") if pid in mvp_by_voter else "—",
+                    "def_target": name_map.get(def_by_voter.get(pid), "—") if pid in def_by_voter else "—",
+                    "voted": pid in mvp_by_voter or pid in def_by_voter,
+                }
+                for pid in played_ids
+            ]
 
         return d
 
@@ -710,6 +729,36 @@ def annul_voting(mid: int, request: Request):
         raise HTTPException(403)
     with db() as c:
         c.execute("UPDATE matches SET voting_closed=2 WHERE id=?", (mid,))
+    return {"ok": True}
+
+
+@app.post("/api/matches/{mid}/vote_as")
+def vote_as(mid: int, x: VoteAsIn, request: Request):
+    """Капитан голосует вместо другого игрока (удаляет старый голос и пишет новый)."""
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        c.execute("SELECT * FROM matches WHERE id=?", (mid,))
+        m = c.fetchone()
+        if not m:
+            raise HTTPException(404)
+        if m["voting_closed"]:
+            raise HTTPException(403, "Голосование закрыто")
+        if m["gf"] is None:
+            raise HTTPException(403, "Матч ещё не сыгран")
+        voter = x.voter_id
+        if x.mvp_target == voter or x.def_target == voter:
+            raise HTTPException(400, "Нельзя голосовать за себя")
+        # Удаляем старые голоса этого игрока, пишем новые
+        c.execute("DELETE FROM votes WHERE match_id=? AND voter_id=?", (mid, voter))
+        c.execute("INSERT INTO votes VALUES(?,?,?,?)", (mid, voter, "mvp", x.mvp_target))
+        c.execute("INSERT INTO votes VALUES(?,?,?,?)", (mid, voter, "defense", x.def_target))
+        c.execute(
+            "UPDATE matches SET voting_opened_at=? WHERE id=? AND voting_opened_at IS NULL",
+            (datetime.utcnow().isoformat(), mid)
+        )
+        maybe_close_voting(c, mid)
     return {"ok": True}
 
 

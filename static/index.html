@@ -1372,44 +1372,85 @@ function voteAdminHtml(m) {
   if (!S.me?.captain || m.gf === null) return "";
   const players = (m.stats || []).filter(s => s.played);
   if (!players.length) return "";
-  const ov = m.vote_overrides || {};
-  const rows = players.map(p => {
-    const cur = ov[p.player_id] || {mvp:0,defense:0};
-    return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #1e1e1e">
-      <div style="flex:1;font-size:13px">${esc(p.name)}</div>
-      <input type="number" min="0" max="99" value="${cur.mvp}" id="vov-mvp-${p.player_id}"
-        style="width:38px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:2px 4px;text-align:center">
-      <input type="number" min="0" max="99" value="${cur.defense}" id="vov-def-${p.player_id}"
-        style="width:38px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;padding:2px 4px;text-align:center">
-    </div>`;
+
+  // ── Таблица: кто за кого проголосовал ──────────────────────────────────
+  const details = m.vote_details || [];
+  const detailRows = players.map(p => {
+    const d = details.find(x => x.voter_id === p.player_id);
+    const voted = d && d.voted;
+    const mvpT  = d ? esc(d.mvp_target) : "—";
+    const defT  = d ? esc(d.def_target) : "—";
+    return `<tr style="border-bottom:1px solid #1e1e1e">
+      <td style="padding:5px 4px;font-size:12px;color:${voted?"#eee":"#555"}">${esc(p.name)}${voted?"":"<span style='color:#555;font-size:10px'> (не голосовал)</span>"}</td>
+      <td style="padding:5px 4px;font-size:12px;color:#f59e0b;text-align:center">${voted?mvpT:"—"}</td>
+      <td style="padding:5px 4px;font-size:12px;color:#3b82f6;text-align:center">${voted?defT:"—"}</td>
+    </tr>`;
   }).join("");
-  return `
-<div class="sect">✏️ Редактор голосов</div>
+
+  const detailTable = `
+<div class="sect">👁 Кто за кого проголосовал</div>
+<div class="card" style="padding:8px 12px">
+  <table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr style="border-bottom:1px solid #2a2a2a">
+        <th style="padding:4px;font-size:10px;color:#555;text-align:left;font-weight:600">Игрок</th>
+        <th style="padding:4px;font-size:10px;color:#f59e0b;text-align:center;font-weight:600">⭐ MVP</th>
+        <th style="padding:4px;font-size:10px;color:#3b82f6;text-align:center;font-weight:600">🛡 Защита</th>
+      </tr>
+    </thead>
+    <tbody>${detailRows}</tbody>
+  </table>
+</div>`;
+
+  // ── Голосовать вместо игрока ────────────────────────────────────────────
+  const playerOpts = players.map(p =>
+    `<option value="${p.player_id}">${esc(p.name)}</option>`
+  ).join("");
+
+  const voteAsBlock = `
+<div class="sect">🗳 Проголосовать вместо игрока</div>
 <div class="card" style="padding:12px">
-  <div style="font-size:11px;color:#666;margin-bottom:8px">Ручное переопределение (заменяет реальные голоса)</div>
-  <div style="display:flex;justify-content:flex-end;gap:4px;margin-bottom:4px;font-size:10px;color:#555">
-    <span style="width:38px;text-align:center">⭐MVP</span>
-    <span style="width:38px;text-align:center">🛡Защ</span>
+  <div style="margin-bottom:10px">
+    <div style="font-size:11px;color:#666;margin-bottom:4px">Игрок</div>
+    <select id="vas-voter" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;font-size:13px;padding:8px">
+      ${playerOpts}
+    </select>
   </div>
-  ${rows}
-  <button onclick="saveVoteAdmin(${m.id},[${players.map(p=>p.player_id).join(',')}])"
-    style="margin-top:10px;width:100%;padding:8px;background:#1e3a1e;border:1px solid #22c55e;border-radius:8px;color:#22c55e;font-size:13px;font-weight:600">
-    💾 Сохранить голоса
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+    <div>
+      <div style="font-size:11px;color:#f59e0b;margin-bottom:4px">⭐ MVP</div>
+      <select id="vas-mvp" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;font-size:13px;padding:8px">
+        ${playerOpts}
+      </select>
+    </div>
+    <div>
+      <div style="font-size:11px;color:#3b82f6;margin-bottom:4px">🛡 Защита</div>
+      <select id="vas-def" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;font-size:13px;padding:8px">
+        ${playerOpts}
+      </select>
+    </div>
+  </div>
+  <button onclick="saveVoteAs(${m.id})"
+    style="width:100%;padding:9px;background:#1e2d3a;border:1px solid #3b82f6;border-radius:8px;color:#3b82f6;font-size:13px;font-weight:600">
+    🗳 Записать голос
   </button>
 </div>`;
+
+  return detailTable + voteAsBlock;
 }
 
-async function saveVoteAdmin(mid, playerIds) {
-  const overrides = playerIds.map(pid => ({
-    player_id: pid,
-    mvp: parseInt(document.getElementById(`vov-mvp-${pid}`)?.value||"0")||0,
-    defense: parseInt(document.getElementById(`vov-def-${pid}`)?.value||"0")||0,
-  }));
+async function saveVoteAs(mid) {
+  const voterId  = parseInt(document.getElementById("vas-voter")?.value);
+  const mvpId    = parseInt(document.getElementById("vas-mvp")?.value);
+  const defId    = parseInt(document.getElementById("vas-def")?.value);
+  if (voterId === mvpId || voterId === defId) {
+    toast("❌ Нельзя голосовать за себя"); return;
+  }
   try {
-    await api(`/api/matches/${mid}/votes/admin`,{method:"POST",body:JSON.stringify({overrides})});
-    toast("✅ Голоса сохранены");
+    await api(`/api/matches/${mid}/vote_as`, {method:"POST", body:JSON.stringify({voter_id:voterId, mvp_target:mvpId, def_target:defId})});
+    toast("✅ Голос записан");
     await renderDetail(mid);
-  } catch(e) { toast("❌ "+e.message); }
+  } catch(e) { toast("❌ " + e.message); }
 }
 
 </script>
