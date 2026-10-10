@@ -147,19 +147,6 @@ def init():
             """,
             (datetime.utcnow().isoformat(),)
         )
-        # One-time: reopen the last match closed by old 24h rule (now using 48h)
-        c.execute(
-            """
-            UPDATE matches SET voting_closed=0
-            WHERE id = (
-                SELECT id FROM matches
-                WHERE voting_closed IN (1,2)
-                AND match_date IS NOT NULL
-                AND (NOW() - match_date::timestamp) < INTERVAL '96 hours'
-                ORDER BY id DESC LIMIT 1
-            )
-            """
-        )
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS red_card INTEGER DEFAULT 0")
         c.execute("""
         CREATE TABLE IF NOT EXISTS vote_override(
