@@ -371,34 +371,31 @@ function dlBar(m) {
   return `<div class="dl-bar ${cls}">${ico} ${txt}</div>`;
 }
 
-function renderMatches() {
-  const el = document.getElementById("pg-matches");
-  if (!S.matches.length) {
-    el.innerHTML=`<div class="empty"><div class="empty-ic">⚽</div><div class="empty-tx">Матчей пока нет</div></div>`;
-    return;
-  }
-  el.innerHTML = S.matches.map(m => {
-    const scored = m.gf !== null;
-    const dt = new Date(m.match_date);
-    const dateStr = dt.toLocaleDateString("ru-RU",{weekday:"short",day:"numeric",month:"long"});
-    const timeStr = dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
-    let scoreCls = "";
-    if (scored) scoreCls = m.gf>m.ga?"win":m.gf<m.ga?"loss":"draw";
-    const scoreHtml = scored
-      ? `<span class="mc-score ${scoreCls}">${m.gf}:${m.ga}</span>`
-      : `<span class="mc-score" style="color:#444">—</span>`;
-    const bonusHtml = scored
-      ? `<div class="mc-bonus">Бонус команды: <b>${rub(m.finance.team_bank)}</b></div>` : "";
-    const rsvpHtml = !scored && !m.deadline_passed
-      ? `<div class="rsvp-row" onclick="event.stopPropagation()">
-           <button class="btn-yes btn-sm" onclick="doRsvp(${m.id},'yes')">✅ Играю</button>
-           <button class="btn-no btn-sm" onclick="doRsvp(${m.id},'no')">❌ Не играю</button>
-         </div>` : "";
-    return `
-<div class="card" onclick="openDetail(${m.id})" style="cursor:pointer">
+function matchCard(m) {
+  const scored = m.gf !== null;
+  const isPlayoff = m.phase === "playoff";
+  const dt = new Date(m.match_date);
+  const dateStr = dt.toLocaleDateString("ru-RU",{weekday:"short",day:"numeric",month:"long"});
+  const timeStr = dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
+  let scoreCls = "";
+  if (scored) scoreCls = m.gf>m.ga?"win":m.gf<m.ga?"loss":"draw";
+  const scoreHtml = scored
+    ? `<span class="mc-score ${scoreCls}">${m.gf}:${m.ga}</span>`
+    : `<span class="mc-score" style="color:#444">—</span>`;
+  const playoffBadge = isPlayoff
+    ? `<span style="font-size:10px;font-weight:700;color:#f59e0b;background:#2a1f00;border:1px solid #f59e0b;border-radius:4px;padding:1px 6px;margin-left:6px">🏆 ПЛЕЙ-ОФФ</span>` : "";
+  const bonusHtml = scored
+    ? `<div class="mc-bonus">Бонус команды: <b>${rub(m.finance.team_bank)}</b>${isPlayoff?" <span style='font-size:10px;color:#f59e0b'>×1.5</span>":""}</div>` : "";
+  const rsvpHtml = !scored && !m.deadline_passed
+    ? `<div class="rsvp-row" onclick="event.stopPropagation()">
+         <button class="btn-yes btn-sm" onclick="doRsvp(${m.id},'yes')">✅ Играю</button>
+         <button class="btn-no btn-sm" onclick="doRsvp(${m.id},'no')">❌ Не играю</button>
+       </div>` : "";
+  return `
+<div class="card" onclick="openDetail(${m.id})" style="cursor:pointer${isPlayoff?";border-left:3px solid #f59e0b":""}">
   <div class="mc-top">
     <div style="min-width:0">
-      <div class="mc-opp">vs ${esc(m.opponent)}</div>
+      <div class="mc-opp" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">vs ${esc(m.opponent)}${playoffBadge}</div>
       <div class="mc-date">${dateStr}, ${timeStr}</div>
     </div>
     ${scoreHtml}
@@ -408,7 +405,24 @@ function renderMatches() {
   ${rsvpHtml}
   ${scored ? `<div style="font-size:11px;color:#444;margin-top:8px">Нажми чтобы открыть статистику →</div>` : ""}
 </div>`;
-  }).join("");
+}
+
+function renderMatches() {
+  const el = document.getElementById("pg-matches");
+  if (!S.matches.length) {
+    el.innerHTML=`<div class="empty"><div class="empty-ic">⚽</div><div class="empty-tx">Матчей пока нет</div></div>`;
+    return;
+  }
+  const playoff = S.matches.filter(m => m.phase === "playoff");
+  const season  = S.matches.filter(m => m.phase !== "playoff");
+  let html = "";
+  if (playoff.length) {
+    html += `<div class="sect" style="color:#f59e0b">🏆 Плей-офф</div>` + playoff.map(matchCard).join("");
+  }
+  if (season.length) {
+    html += `<div class="sect">📅 Сезон</div>` + season.map(matchCard).join("");
+  }
+  el.innerHTML = html;
 }
 
 async function doRsvp(mid, status, pid=null) {
@@ -452,7 +466,7 @@ async function renderDetail(mid) {
     el.innerHTML = `
 <div class="det-header">
   <button class="back-btn" onclick="back()"><svg class="back-icon" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
-  <div class="det-title">vs ${esc(m.opponent)}</div>
+  <div class="det-title">vs ${esc(m.opponent)}${m.phase==="playoff"?` <span style="font-size:12px;color:#f59e0b;background:#2a1f00;border:1px solid #f59e0b;border-radius:4px;padding:1px 7px;vertical-align:middle">🏆 ×1.5</span>`:""}</div>
 </div>
 
 <div class="card" style="text-align:center;padding:16px">
@@ -568,6 +582,19 @@ ${S.me.captain && scored && !m.voting_closed && m.vote_counts ? `
 `;
   } catch(e) {
     el.innerHTML=`<div class="empty"><div class="empty-ic">⚠️</div><div class="empty-tx">${esc(e.message)}</div></div>`;
+  }
+}
+
+function setPhase(ph) {
+  document.getElementById("newPhase").value = ph;
+  const s = document.getElementById("phaseSeasonBtn");
+  const p = document.getElementById("phasePlayoffBtn");
+  if (ph === "season") {
+    s.style.borderColor="#22c55e"; s.style.background="#1e3a1e"; s.style.color="#22c55e";
+    p.style.borderColor="#333";    p.style.background="#1a1a1a"; p.style.color="#555";
+  } else {
+    p.style.borderColor="#f59e0b"; p.style.background="#2a1f00"; p.style.color="#f59e0b";
+    s.style.borderColor="#333";    s.style.background="#1a1a1a"; s.style.color="#555";
   }
 }
 
@@ -730,6 +757,18 @@ ${pending.map(pl=>`
   <input class="form-in" id="mdt" type="datetime-local">
   <label class="form-lbl">Дедлайн подтверждения</label>
   <input class="form-in" id="mdl" type="datetime-local">
+  <label class="form-lbl">Тип матча</label>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px" id="phaseToggle">
+    <button id="phaseSeasonBtn" onclick="setPhase('season')"
+      style="padding:9px;border-radius:8px;font-size:13px;font-weight:600;border:2px solid #22c55e;background:#1e3a1e;color:#22c55e;cursor:pointer">
+      📅 Сезон
+    </button>
+    <button id="phasePlayoffBtn" onclick="setPhase('playoff')"
+      style="padding:9px;border-radius:8px;font-size:13px;font-weight:600;border:2px solid #333;background:#1a1a1a;color:#555;cursor:pointer">
+      🏆 Плей-офф
+    </button>
+  </div>
+  <input type="hidden" id="newPhase" value="season">
   <button class="btn-primary" onclick="createMatch()">Создать матч</button>
 </div>
 
@@ -885,10 +924,11 @@ async function createMatch() {
   const opp = document.getElementById("opp").value.trim();
   const mdt = document.getElementById("mdt").value;
   const mdl = document.getElementById("mdl").value;
+  const phase = document.getElementById("newPhase")?.value || "season";
   if (!opp||!mdt) { toast("Укажи соперника и дату"); return; }
   try {
     const s = S.seasons.find(x=>x.active)||S.seasons[0];
-    await api("/api/matches",{method:"POST",body:JSON.stringify({opponent:opp,match_date:mdt,rsvp_deadline:mdl||null,season_id:s?.id||1})});
+    await api("/api/matches",{method:"POST",body:JSON.stringify({opponent:opp,match_date:mdt,rsvp_deadline:mdl||null,season_id:s?.id||1,phase})});
     toast("✅ Матч создан");
     S.matches = await api("/api/matches");
     renderMatches(); renderCaptain();

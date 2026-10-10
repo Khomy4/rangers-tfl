@@ -137,6 +137,7 @@ def init():
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS discipline_ok INTEGER DEFAULT NULL")
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS yellow_card INTEGER DEFAULT 0")
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS voting_opened_at TEXT DEFAULT NULL")
+        c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS phase TEXT DEFAULT 'season'")
         # Backfill: start 24h clock now for any active voting that predates this feature
         c.execute(
             """
@@ -263,21 +264,25 @@ def calc_finance(c: Cur, mid: int) -> dict:
     m = c.fetchone()
     if not m:
         return {}
+    is_playoff = (m.get("phase") or "season") == "playoff"
+    mult = 1.5 if is_playoff else 1.0
     disc_ok = m.get("discipline_ok")
     if disc_ok is None:
         disc = 0
         disc_pending = True
     else:
-        disc = 300 if disc_ok else 0
+        disc = int(300 * mult) if disc_ok else 0
         disc_pending = False
-    rb = result_bonus(m["gf"], m["ga"])
+    rb = int(result_bonus(m["gf"], m["ga"]) * mult)
+    personal = int(600 * mult) if m["gf"] is not None else 0
     return {
         "discipline": disc,
-        "discipline_ok": disc_ok,   # None=pending, 1=yes, 0=no
+        "discipline_ok": disc_ok,
         "discipline_pending": disc_pending,
         "result": rb,
         "team_bank": disc + rb,
-        "personal_fund": 600 if m["gf"] is not None else 0,
+        "personal_fund": personal,
+        "is_playoff": is_playoff,
     }
 
 
@@ -298,6 +303,7 @@ class MatchIn(BaseModel):
     match_date: str
     rsvp_deadline: Optional[str] = None
     season_id: Optional[int] = 1
+    phase: Optional[str] = "season"  # "season" or "playoff"
 
 class ScoreIn(BaseModel):
     gf: int
@@ -559,7 +565,8 @@ def match_detail(mid: int, request: Request):
             mvp_pts = 3 if (m["voting_closed"] == 1 and pl["id"] in mvp_winners) else 0
             def_pts = 2 if (m["voting_closed"] == 1 and pl["id"] in def_winners) else 0
             card_pen = st.get("yellow_card",0) * 1 + st.get("red_card",0) * 3
-            pts = st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts - card_pen
+            _mult = 1.5 if (m.get("phase") or "season") == "playoff" else 1.0
+            pts = round((st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts) * _mult) - card_pen
             d["stats"].append({
                 "player_id": pl["id"],
                 "name": pl["name"],
@@ -596,6 +603,7 @@ def match_detail(mid: int, request: Request):
         d["voting_expired"] = voting_expired
         d["voting_opened_at"] = m.get("match_date")
         d["voting_annulled"] = m["voting_closed"] == 2
+        d["phase"] = m.get("phase") or "season"
 
         # Lineup
         c.execute("SELECT slot, player_id FROM lineup WHERE match_id=?", (mid,))
@@ -669,8 +677,8 @@ def add_match(x: MatchIn, request: Request):
         raise HTTPException(403)
     with db() as c:
         c.execute(
-            "INSERT INTO matches(season_id,opponent,match_date,rsvp_deadline) VALUES(?,?,?,?) RETURNING id",
-            (x.season_id or 1, x.opponent, x.match_date, x.rsvp_deadline),
+            "INSERT INTO matches(season_id,opponent,match_date,rsvp_deadline,phase) VALUES(?,?,?,?,?) RETURNING id",
+            (x.season_id or 1, x.opponent, x.match_date, x.rsvp_deadline, x.phase or "season"),
         )
         row = c.fetchone()
         return {"id": row["id"]}
@@ -683,8 +691,8 @@ def update_match(mid: int, x: MatchIn, request: Request):
         raise HTTPException(403)
     with db() as c:
         c.execute(
-            "UPDATE matches SET opponent=?,match_date=?,rsvp_deadline=? WHERE id=?",
-            (x.opponent, x.match_date, x.rsvp_deadline, mid),
+            "UPDATE matches SET opponent=?,match_date=?,rsvp_deadline=?,phase=? WHERE id=?",
+            (x.opponent, x.match_date, x.rsvp_deadline, x.phase or "season", mid),
         )
     return {"ok": True}
 
@@ -1008,8 +1016,10 @@ def leaderboard(request: Request, season_id: Optional[int] = None):
             c.execute("SELECT id FROM seasons WHERE active=1")
             row = c.fetchone()
             season_id = row["id"] if row else 1
-        c.execute("SELECT id FROM matches WHERE season_id=?", (season_id,))
-        match_ids = [r["id"] for r in c.fetchall()]
+        c.execute("SELECT id, phase FROM matches WHERE season_id=?", (season_id,))
+        match_rows = c.fetchall()
+        match_ids = [r["id"] for r in match_rows]
+        playoff_ids = {r["id"] for r in match_rows if (r.get("phase") or "season") == "playoff"}
 
         # Exclude Босс from leaderboard
         c.execute(
@@ -1067,7 +1077,47 @@ def leaderboard(request: Request, season_id: Optional[int] = None):
             else:
                 yc = rc = 0
             card_pen = yc * 1 + rc * 3
-            pts = goals * 2 + assists + mvp * 3 + dfn * 2 + kp - card_pen
+            # Compute pts with playoff multiplier per match
+            if match_ids and playoff_ids:
+                non_po = [i for i in match_ids if i not in playoff_ids]
+                po = [i for i in match_ids if i in playoff_ids]
+                def _stat(ids, col):
+                    if not ids:
+                        return 0
+                    ph2 = ",".join(["%s"] * len(ids))
+                    c.execute(
+                        f"SELECT COALESCE(SUM({col}),0) AS v FROM stats WHERE player_id=%s AND played=1 AND match_id IN ({ph2})",
+                        [pl["id"]] + ids,
+                    )
+                    return c.fetchone()["v"]
+                def _mvp(ids, vtype):
+                    if not ids:
+                        return 0
+                    ph2 = ",".join(["%s"] * len(ids))
+                    c.execute(
+                        f"""SELECT COUNT(*) AS n FROM (
+                            SELECT v.match_id, v.target_id,
+                                   RANK() OVER(PARTITION BY v.match_id ORDER BY COUNT(*) DESC) AS rk
+                            FROM votes v JOIN matches mx ON mx.id=v.match_id
+                            WHERE v.vtype=%s AND v.match_id IN ({ph2}) AND mx.voting_closed=1
+                            GROUP BY v.match_id, v.target_id
+                        ) q WHERE target_id=%s AND rk=1""",
+                        [vtype] + ids + [pl["id"]],
+                    )
+                    return c.fetchone()["n"]
+                pts_base = (
+                    _stat(non_po,"goals")*2 + _stat(non_po,"assists") +
+                    _stat(non_po,"keeper_points") +
+                    _mvp(non_po,"mvp")*3 + _mvp(non_po,"defense")*2
+                )
+                pts_po = round((
+                    _stat(po,"goals")*2 + _stat(po,"assists") +
+                    _stat(po,"keeper_points") +
+                    _mvp(po,"mvp")*3 + _mvp(po,"defense")*2
+                ) * 1.5)
+                pts = pts_base + pts_po - card_pen
+            else:
+                pts = goals * 2 + assists + mvp * 3 + dfn * 2 + kp - card_pen
             rows.append(dict(
                 id=pl["id"], name=pl["name"], position=pl["position"] or "",
                 games=games, total=len(match_ids),
