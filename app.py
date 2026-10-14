@@ -238,6 +238,11 @@ def is_captain(p: dict) -> bool:
 
 # ── Finance ───────────────────────────────────────────────────────────────────
 
+def po_round(x) -> int:
+    """Round half up (4.5 -> 5), not Python's banker's rounding."""
+    return int(x + 0.5)
+
+
 def result_bonus(gf, ga) -> int:
     if gf is None or ga is None:
         return 0
@@ -553,7 +558,7 @@ def match_detail(mid: int, request: Request):
             def_pts = 2 if (m["voting_closed"] == 1 and pl["id"] in def_winners) else 0
             card_pen = st.get("yellow_card",0) * 1 + st.get("red_card",0) * 3
             _mult = 1.5 if (m.get("phase") or "season") == "playoff" else 1.0
-            pts = round((st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts) * _mult) - card_pen
+            pts = po_round((st["goals"] * 2 + st["assists"] + st["keeper_points"] + mvp_pts + def_pts) * _mult) - card_pen
             d["stats"].append({
                 "player_id": pl["id"],
                 "name": pl["name"],
@@ -629,7 +634,7 @@ def match_detail(mid: int, request: Request):
         d["notes"] = nrow["notes"] if nrow else ""
 
         # Captain sees live vote breakdown
-        if is_captain(p) and not m["voting_closed"]:
+        if is_captain(p):
             name_map = {pl["id"]: pl["name"] for pl in all_players}
             def breakdown(vdict):
                 items = [{"id": k, "name": name_map.get(k, "?"), "count": v} for k, v in vdict.items()]
@@ -1097,11 +1102,14 @@ def leaderboard(request: Request, season_id: Optional[int] = None):
                     _stat(non_po,"keeper_points") +
                     _mvp(non_po,"mvp")*3 + _mvp(non_po,"defense")*2
                 )
-                pts_po = round((
-                    _stat(po,"goals")*2 + _stat(po,"assists") +
-                    _stat(po,"keeper_points") +
-                    _mvp(po,"mvp")*3 + _mvp(po,"defense")*2
-                ) * 1.5)
+                pts_po = sum(
+                    po_round((
+                        _stat([pm],"goals")*2 + _stat([pm],"assists") +
+                        _stat([pm],"keeper_points") +
+                        _mvp([pm],"mvp")*3 + _mvp([pm],"defense")*2
+                    ) * 1.5)
+                    for pm in po
+                )
                 pts = pts_base + pts_po - card_pen
             else:
                 pts = goals * 2 + assists + mvp * 3 + dfn * 2 + kp - card_pen
