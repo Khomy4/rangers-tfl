@@ -660,6 +660,16 @@ function renderRating() {
 }
 
 // ── BANK ──────────────────────────────────────────────────────────────────────
+async function saveRemaining() {
+  const v = parseInt(document.getElementById("remGames")?.value, 10);
+  if (isNaN(v) || v < 0) { toast("Укажи число от 0"); return; }
+  try {
+    await api(`/api/seasons/${S.summary.season_id}/remaining`, {method:"PUT", body:JSON.stringify({remaining:v})});
+    toast("✅ Сохранено");
+    await loadBank();
+  } catch(e) { toast("❌ " + e.message); }
+}
+
 async function loadBank() {
   try {
     S.summary = await api("/api/summary");
@@ -673,7 +683,16 @@ function renderBank() {
   const el = document.getElementById("pg-bank");
   el.innerHTML = `
 <div class="sect">Прогресс сезона</div>
-<div class="bank-cell"><div class="bank-lbl">Сыграно</div><div class="bank-val" style="color:#fff">${s.played} из 5</div></div>
+<div class="bank-grid">
+  <div class="bank-cell"><div class="bank-lbl">Сыграно</div><div class="bank-val" style="color:#fff">${s.played} из ${s.total_games ?? 5}</div></div>
+  <div class="bank-cell"><div class="bank-lbl">Осталось игр</div><div class="bank-val" style="color:#f59e0b">${s.remaining ?? Math.max(0, 5 - s.played)}</div></div>
+</div>
+${S.me?.captain ? `<div class="card-sm" style="display:flex;align-items:center;gap:8px;margin-top:8px">
+  <label for="remGames" style="flex:1;font-size:12px;color:#888">Изменить, сколько игр осталось</label>
+  <input id="remGames" type="number" min="0" max="200" inputmode="numeric" value="${s.remaining ?? 0}"
+    style="width:64px;background:#111;border:1px solid #2e2e2e;color:#f0f0f0;border-radius:8px;padding:7px;font-size:15px;text-align:center">
+  <button onclick="saveRemaining()" style="padding:8px 12px;background:#1e3a1e;border:1px solid #22c55e;border-radius:8px;color:#22c55e;font-size:13px;font-weight:700;cursor:pointer">Сохранить</button>
+</div>` : ""}
 <div class="sect">Заработали вместе</div>
 <div class="bank-grid">
   <div class="bank-cell"><div class="bank-lbl">Командный банк</div><div class="bank-val" style="color:#22c55e">${rub(s.team_bank)}</div></div>

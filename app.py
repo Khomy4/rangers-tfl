@@ -138,6 +138,7 @@ def init():
         c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS yellow_card INTEGER DEFAULT 0")
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS voting_opened_at TEXT DEFAULT NULL")
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS phase TEXT DEFAULT 'season'")
+        c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS total_games INTEGER DEFAULT 5")
         # Backfill: start 24h clock now for any active voting that predates this feature
         c.execute(
             """
@@ -341,6 +342,9 @@ class PositionIn(BaseModel):
 class PlayerNameIn(BaseModel):
     name: str
 
+class RemainingGamesIn(BaseModel):
+    remaining: int
+
 class SeasonIn(BaseModel):
     name: str
 
@@ -460,6 +464,21 @@ def new_season(x: SeasonIn, request: Request):
         c.execute("INSERT INTO seasons(name,active) VALUES(?,1) RETURNING id", (x.name,))
         row = c.fetchone()
         return {"id": row["id"]}
+
+
+@app.put("/api/seasons/{sid}/remaining")
+def set_remaining_games(sid: int, x: RemainingGamesIn, request: Request):
+    """Captain sets how many games are left; stored as total = played + remaining."""
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    if x.remaining < 0 or x.remaining > 200:
+        raise HTTPException(400, "Некорректное число игр")
+    with db() as c:
+        c.execute("SELECT COUNT(*) AS n FROM matches WHERE gf IS NOT NULL AND season_id=?", (sid,))
+        played = c.fetchone()["n"]
+        c.execute("UPDATE seasons SET total_games=? WHERE id=?", (played + x.remaining, sid))
+    return {"ok": True, "total_games": played + x.remaining}
 
 
 # ── Matches ───────────────────────────────────────────────────────────────────
@@ -1140,9 +1159,16 @@ def summary(request: Request, season_id: Optional[int] = None):
             "SELECT id FROM matches WHERE gf IS NOT NULL AND season_id=?", (season_id,)
         )
         ids = [r["id"] for r in c.fetchall()]
-        team_bank = sum(calc_finance(c, i)["team_bank"] for i in ids)
+        fin = [calc_finance(c, i) for i in ids]
+        c.execute("SELECT total_games FROM seasons WHERE id=?", (season_id,))
+        srow = c.fetchone()
+        total = (srow or {}).get("total_games") or 5
+        total = max(total, len(ids))
         return {
+            "season_id": season_id,
             "played": len(ids),
-            "team_bank": team_bank,
-            "personal_fund": len(ids) * 600,
+            "total_games": total,
+            "remaining": total - len(ids),
+            "team_bank": sum(f["team_bank"] for f in fin),
+            "personal_fund": sum(f["personal_fund"] for f in fin),
         }
