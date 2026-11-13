@@ -780,75 +780,44 @@ ${s.rules>=2 ? round1Html(s) : ""}
 </div>
 <button class="btn-ghost" style="margin-top:4px" onclick="togglePremInfo()">ℹ️ Как работают премиальные</button>
 <div id="prem-info" style="display:none;margin-top:10px">
-${s.rules>=2 ? PREM_V2 : `
-<div class="card">
-  <div style="font-size:15px;font-weight:800;margin-bottom:14px">💰 Как мы зарабатываем</div>
-
-  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:3px">✅ Дисциплина — 300 ₽</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.5">Все вовремя ответили «Играю / Не играю» и никто не пропал без предупреждения.</div>
-
-  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🏆 Результат матча</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">
-    Ничья — 200 ₽ &nbsp;·&nbsp; Победа в 1 мяч — 300 ₽ &nbsp;·&nbsp; в 2 — 400 ₽ &nbsp;·&nbsp; в 3 — 500 ₽ &nbsp;·&nbsp; в 4+ — 600 ₽
-  </div>
-
-  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">⭐ Личные очки</div>
-  <div style="font-size:12px;color:#888;margin-bottom:4px;line-height:1.8">
-    ⚽ Гол +2 &nbsp;·&nbsp; 🎯 Ассист +1 &nbsp;·&nbsp; 🏅 MVP +3 &nbsp;·&nbsp; 🛡 Лучший в обороне +2<br>
-    🧤 Сухой матч вратаря +3 &nbsp;·&nbsp; Пропустил 1–2 мяча +1
-  </div>
-  <div style="font-size:11px;color:#555;margin-bottom:12px;line-height:1.5">MVP и лучший в обороне — голосование команды после матча. За себя нельзя.</div>
-
-  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">💵 Призовой фонд</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.6">
-    600 ₽ с каждого матча копятся весь сезон и делятся между лучшими игроками по итогам турнира.
-  </div>
-
-  <div style="border-top:1px solid #222;padding-top:10px;font-size:12px;color:#666;line-height:1.8">
-    <b style="color:#3b82f6">💰 600 ₽/матч</b> → в личный призовой фонд сезона<br>
-    <b style="color:#22c55e">🏦 Дисциплина + результат</b> → в командный банк<br>
-    <span style="font-size:11px;color:#444">(тратится вместе по решению команды после сезона)</span>
-  </div>
-</div>`}
+${PREM_INFO}
 </div>`;
 }
 
-const PREM_V2 = `
+const PREM_INFO = `
 <div class="card">
   <div style="font-size:15px;font-weight:800;margin-bottom:14px">💰 Как мы зарабатываем</div>
 
-  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:3px">✅ Дисциплина — 300 ₽</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.5">Все вовремя ответили «Играю / Не играю» и никто не пропал без предупреждения.</div>
-
+  <div style="font-size:13px;font-weight:800;color:#22c55e;margin-bottom:8px">🏦 Командный банк</div>
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">✅ Дисциплина — 300 ₽</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Все вовремя ответили «Играю / Не играю» и никто не пропал без предупреждения.</div>
   <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🏆 Результат матча</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Ничья — 200 ₽ &nbsp;·&nbsp; Победа — 500 ₽ &nbsp;·&nbsp; Победа в 3+ мяча — 600 ₽</div>
+  <div style="font-size:11px;color:#555;margin:-6px 0 14px;line-height:1.5">Банк тратим вместе по решению команды после турнира.</div>
+
+  <div style="font-size:13px;font-weight:800;color:#3b82f6;margin-bottom:8px">💵 Личный призовой фонд</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">600 ₽ с каждого сыгранного матча. Делится между игроками по очкам рейтинга.</div>
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">📅 Выплата после первого круга</div>
   <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">
-    Ничья — 200 ₽ &nbsp;·&nbsp; Победа — 500 ₽ &nbsp;·&nbsp; Победа в 3+ мяча — 600 ₽
+    Если после первого круга мы в топ-3 таблицы — фонд первого круга выплачивается сразу: по очкам первого круга тем, кто сыграл хотя бы половину матчей круга.<br>
+    Если не в топ-3 — фонд не выплачивается и копится до конца турнира.
   </div>
 
-  <div style="font-size:12px;font-weight:700;color:#e879f9;margin-bottom:5px">⭐ Топ-3 соперника</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.6">
-    Победа над командой из топ-3 — всё за матч ×2: командные призовые, личный фонд и личные очки каждого игрока.
-  </div>
+  <div style="font-size:13px;font-weight:800;color:#e879f9;margin-bottom:8px">⭐ Матчи с топ-3 соперниками</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Победа над командой из топ-3 — всё за матч ×2: командные призовые, личный фонд и личные очки каждого игрока.</div>
 
-  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">⭐ Личные очки</div>
-  <div style="font-size:12px;color:#888;margin-bottom:4px;line-height:1.8">
-    ⚽ Гол +1 &nbsp;·&nbsp; 🎯 Ассист +1 &nbsp;·&nbsp; 🏅 MVP +3<br>
-    🏆 Победа +2 &nbsp;·&nbsp; 🤝 Ничья +1 — каждому, кто играл<br>
-    🛡 Защитник: сухой матч +2, пропустили 1 → +1, плюс +1 за каждый мяч разницы в счёте (до +3)<br>
-    🧤 Вратарь: сухой матч +3, пропустил 1–2 → +1<br>
-    🟡 Жёлтая −1 &nbsp;·&nbsp; 🔴 Красная −3
-  </div>
-  <div style="font-size:11px;color:#555;margin-bottom:12px;line-height:1.5">MVP — голосование команды после матча. За себя нельзя.</div>
-
-  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">💵 Призовой фонд</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.6">
-    600 ₽ с каждого матча. Если после первого круга мы в топ-3, фонд первого круга выплачивается сразу — по очкам первого круга, тем, кто сыграл хотя бы половину матчей. Если нет — копится до конца турнира.
-  </div>
-
-  <div style="border-top:1px solid #222;padding-top:10px;font-size:12px;color:#666;line-height:1.8">
-    <b style="color:#3b82f6">💰 600 ₽/матч</b> → в личный призовой фонд<br>
-    <b style="color:#22c55e">🏦 Дисциплина + результат</b> → в командный банк<br>
-    <span style="font-size:11px;color:#444">(тратится вместе по решению команды после сезона)</span>
+  <div style="font-size:13px;font-weight:800;color:#f0f0f0;margin-bottom:8px">📊 Личные очки</div>
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">Всем, кто играл</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">⚽ Гол +1 &nbsp;·&nbsp; 🎯 Ассист +1 &nbsp;·&nbsp; 🏅 MVP +3<br>🏆 Победа +2 &nbsp;·&nbsp; 🤝 Ничья +1</div>
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🛡 Защитникам</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Сухой матч +2 &nbsp;·&nbsp; Пропустили 1 мяч +1<br>+1 за каждый мяч разницы в счёте при победе (максимум +3)</div>
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🧤 Вратарю</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Сухой матч +3 &nbsp;·&nbsp; Пропустил 1–2 мяча +1</div>
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">Штрафы</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">🟡 Жёлтая −1 &nbsp;·&nbsp; 🔴 Красная −3 &nbsp;<span style="color:#555">(не умножаются)</span></div>
+  <div style="font-size:11px;color:#555;line-height:1.6">
+    Позицию каждого игрока в матче отмечает капитан.<br>
+    MVP выбирает команда голосованием после матча. За себя голосовать нельзя.
   </div>
 </div>`;
 
