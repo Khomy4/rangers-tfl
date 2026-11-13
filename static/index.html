@@ -371,6 +371,17 @@ function dlBar(m) {
   return `<div class="dl-bar ${cls}">${ico} ${txt}</div>`;
 }
 
+// Scoring rules of the active season: 1 = old, 2 = new (MVP only, defenders by score, top-3 x2)
+function isV2() { return ((S.seasons || []).find(x => x.active) || {}).rules >= 2; }
+const POS_LABEL = {GK:"🧤 Вратарь", DEF:"🛡 Защитник", MID:"🔄 Полузащитник", FWD:"⚡ Нападающий"};
+const POS_FROM_PROFILE = {"Вратарь":"GK","Защитник":"DEF","Универсал":"MID","Нападающий":"FWD"};
+function multBadge(f) {
+  const mu = f && f.mult;
+  if (mu === 2) return `<span style="font-size:10px;color:#f59e0b">×2</span>`;
+  if (mu === 1.5) return `<span style="font-size:10px;color:#f59e0b">×1.5</span>`;
+  return "";
+}
+
 function matchCard(m) {
   const scored = m.gf !== null;
   const isPlayoff = m.phase === "playoff";
@@ -384,8 +395,10 @@ function matchCard(m) {
     : `<span class="mc-score" style="color:#444">—</span>`;
   const playoffBadge = isPlayoff
     ? `<span style="font-size:10px;font-weight:700;color:#f59e0b;background:#2a1f00;border:1px solid #f59e0b;border-radius:4px;padding:1px 6px;margin-left:6px">🏆 ПЛЕЙ-ОФФ</span>` : "";
+  const topBadge = m.is_top
+    ? `<span style="font-size:10px;font-weight:700;color:#e879f9;background:#2a0f2e;border:1px solid #e879f9;border-radius:4px;padding:1px 6px;margin-left:6px">⭐ ТОП-3</span>` : "";
   const bonusHtml = scored
-    ? `<div class="mc-bonus">Бонус команды: <b>${rub(m.finance.team_bank)}</b>${isPlayoff?" <span style='font-size:10px;color:#f59e0b'>×1.5</span>":""}</div>` : "";
+    ? `<div class="mc-bonus">Бонус команды: <b>${rub(m.finance.team_bank)}</b> ${multBadge(m.finance)}</div>` : "";
   const rsvpHtml = !scored && !m.deadline_passed
     ? `<div class="rsvp-row" onclick="event.stopPropagation()">
          <button class="btn-yes btn-sm" onclick="doRsvp(${m.id},'yes')">✅ Играю</button>
@@ -395,7 +408,7 @@ function matchCard(m) {
 <div class="card" onclick="openDetail(${m.id})" style="cursor:pointer${isPlayoff?";border-left:3px solid #f59e0b":""}">
   <div class="mc-top">
     <div style="min-width:0">
-      <div class="mc-opp" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">vs ${esc(m.opponent)}${playoffBadge}</div>
+      <div class="mc-opp" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">vs ${esc(m.opponent)}${playoffBadge}${topBadge}</div>
       <div class="mc-date">${dateStr}, ${timeStr}</div>
     </div>
     ${scoreHtml}
@@ -466,7 +479,7 @@ async function renderDetail(mid) {
     el.innerHTML = `
 <div class="det-header">
   <button class="back-btn" onclick="back()"><svg class="back-icon" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
-  <div class="det-title">vs ${esc(m.opponent)}${m.phase==="playoff"?` <span style="font-size:12px;color:#f59e0b;background:#2a1f00;border:1px solid #f59e0b;border-radius:4px;padding:1px 7px;vertical-align:middle">🏆 ×1.5</span>`:""}</div>
+  <div class="det-title">vs ${esc(m.opponent)}${m.finance && m.finance.mult > 1 ? ` <span style="font-size:12px;color:#f59e0b;background:#2a1f00;border:1px solid #f59e0b;border-radius:4px;padding:1px 7px;vertical-align:middle">${m.finance.mult===2?"⭐ ×2":"🏆 ×1.5"}</span>` : m.is_top ? ` <span style="font-size:12px;color:#e879f9;background:#2a0f2e;border:1px solid #e879f9;border-radius:4px;padding:1px 7px;vertical-align:middle">⭐ ТОП-3</span>` : ""}</div>
 </div>
 
 <div class="card" style="text-align:center;padding:16px">
@@ -510,12 +523,17 @@ ${scored && m.stats.length ? `
 <div class="card">
   ${m.stats.filter(s=>s.played).sort((a,b)=>b.points-a.points).map(s=>`
     <div class="st-row">
-      <div class="st-name"><b>${esc(s.name)}</b><span>${esc(s.position)}</span></div>
+      <div class="st-name"><b>${esc(s.name)}</b><span>${m.rules>=2 && s.match_pos ? POS_LABEL[s.match_pos] : esc(s.position)}</span></div>
       <div class="st-chips">
         ${s.goals>0?`<span class="chip chip-green">⚽${s.goals}</span>`:""}
         ${s.assists>0?`<span class="chip chip-blue">🎯${s.assists}</span>`:""}
-        ${s.keeper_points===3?`<span class="chip chip-gray">🧤сухарь</span>`:""}
-        ${s.keeper_points===1?`<span class="chip chip-gray">🧤+1</span>`:""}
+        ${m.rules>=2 ? `
+          ${s.result_pts?`<span class="chip chip-gray">${s.result_pts===2?"🏆 победа +2":"🤝 ничья +1"}</span>`:""}
+          ${s.pos_pts?`<span class="chip chip-gray">${s.match_pos==="GK"?"🧤":"🛡"} +${s.pos_pts}</span>`:""}
+        ` : `
+          ${s.keeper_points===3?`<span class="chip chip-gray">🧤сухарь</span>`:""}
+          ${s.keeper_points===1?`<span class="chip chip-gray">🧤+1</span>`:""}
+        `}
         ${s.yellow_card?`<span class="chip chip-gray" style="color:#f0c030">🟡 -1</span>`:""}
         ${s.red_card?`<span class="chip chip-gray" style="color:#e05060">🔴 -3</span>`:""}
         ${s.is_mvp?`<span class="chip chip-gold">⭐MVP</span>`:""}
@@ -537,7 +555,7 @@ ${canVote ? `
        <select class="form-sel" id="mvpSel"><option value="">Выбери игрока...</option>${voteOpts}</select>
        <button class="btn-primary" style="margin-bottom:14px" onclick="doVote(${mid},'mvp','mvpSel')">Проголосовать за MVP</button>`
   }
-  ${m.my_votes?.defense
+  ${m.rules>=2 ? "" : m.my_votes?.defense
     ? `<div style="font-size:13px">🛡 Защита: <b style="color:#3b82f6">${esc(playedPlayers.find(p=>p.player_id===m.my_votes.defense)?.name||"—")}</b> <span style="color:#555;font-size:11px">— голос отдан</span></div>`
     : `<label class="form-lbl">🛡 Лучший в защите</label>
        <select class="form-sel" id="defSel"><option value="">Выбери игрока...</option>${voteOpts}</select>
@@ -555,7 +573,7 @@ ${voteAdminHtml(m)}
 ${S.me.captain && scored && !m.voting_closed && m.vote_counts ? `
 <div class="card-sm" style="font-size:12px;color:#666">
   <div style="font-weight:700;color:#aaa;margin-bottom:8px">📊 Ход голосования (только ты видишь)</div>
-  <div style="margin-bottom:4px;font-size:11px;color:#555">Проголосовало: MVP ${m.vote_progress.mvp_voted}/${m.vote_progress.eligible} · Защита ${m.vote_progress.def_voted}/${m.vote_progress.eligible}</div>
+  <div style="margin-bottom:4px;font-size:11px;color:#555">Проголосовало: MVP ${m.vote_progress.mvp_voted}/${m.vote_progress.eligible}${m.rules>=2 ? "" : ` · Защита ${m.vote_progress.def_voted}/${m.vote_progress.eligible}`}</div>
   ${m.voting_opened_at ? (() => {
     const deadline = new Date(new Date(m.voting_opened_at + "Z").getTime() + 172800000);
     const diff = deadline - Date.now();
@@ -567,15 +585,15 @@ ${S.me.captain && scored && !m.voting_closed && m.vote_counts ? `
     <button onclick="captainCloseVoting(${m.id})" style="flex:1;padding:8px;background:#22c55e;color:#000;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">✅ Засчитать</button>
     <button onclick="captainAnnulVoting(${m.id})" style="flex:1;padding:8px;background:#e05060;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">❌ Аннулировать</button>
   </div>` : ""}
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+  <div style="display:grid;grid-template-columns:${m.rules>=2?"1fr":"1fr 1fr"};gap:8px">
     <div>
       <div style="font-size:11px;font-weight:700;color:#f59e0b;margin-bottom:4px">⭐ MVP</div>
       ${m.vote_counts.mvp.length ? m.vote_counts.mvp.map(v=>`<div style="font-size:12px">${esc(v.name)} — ${v.count}</div>`).join("") : `<div style="font-size:11px;color:#444">нет голосов</div>`}
     </div>
-    <div>
+    ${m.rules>=2 ? "" : `<div>
       <div style="font-size:11px;font-weight:700;color:#3b82f6;margin-bottom:4px">🛡 Защита</div>
       ${m.vote_counts.defense.length ? m.vote_counts.defense.map(v=>`<div style="font-size:12px">${esc(v.name)} — ${v.count}</div>`).join("") : `<div style="font-size:11px;color:#444">нет голосов</div>`}
-    </div>
+    </div>`}
   </div>
 </div>
 ` : ""}
@@ -636,9 +654,11 @@ async function doVote(mid, vtype, selId) {
 }
 
 // ── RATING ────────────────────────────────────────────────────────────────────
+let lbRound = 0;  // 0 = whole season, 1 / 2 = round
+async function setLbRound(r) { lbRound = r; await loadRating(); }
 async function loadRating() {
   try {
-    S.lb = await api("/api/leaderboard");
+    S.lb = await api("/api/leaderboard" + (lbRound ? `?round=${lbRound}` : ""));
     renderRating();
   } catch(e) {}
 }
@@ -647,12 +667,15 @@ function renderRating() {
   const el = document.getElementById("pg-rating");
   if (!S.lb.length) { el.innerHTML=`<div class="empty"><div class="empty-ic">📊</div><div class="empty-tx">Нет данных</div></div>`; return; }
   const medals = ["🥇","🥈","🥉"];
-  el.innerHTML = `<div class="sect">Рейтинг сезона</div><div class="card">${S.lb.map(r=>`
+  const tabs = isV2() && S.summary?.r1_done ? `<div style="display:flex;gap:6px;margin-bottom:10px">
+    ${[[0,"Весь сезон"],[1,"1 круг"],[2,"2 круг"]].map(([v,t])=>`<button onclick="setLbRound(${v})" style="flex:1;padding:7px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid ${lbRound===v?"#3b82f6":"#2a2a2a"};background:${lbRound===v?"#1e2d3a":"#161616"};color:${lbRound===v?"#3b82f6":"#777"}">${t}</button>`).join("")}
+  </div>` : "";
+  el.innerHTML = `<div class="sect">Рейтинг сезона</div>${tabs}<div class="card">${S.lb.map(r=>`
     <div class="lb-row">
       <div class="lb-rank">${r.rank<=3?medals[r.rank-1]:r.rank}</div>
       <div class="lb-info">
         <b>${esc(r.name)}</b>
-        <div class="lb-detail">${esc(r.position)||"—"} · ${r.games} игр · ⚽${r.goals} 🎯${r.assists} ⭐${r.mvp} 🛡${r.defense}</div>
+        <div class="lb-detail">${esc(r.position)||"—"} · ${r.games} игр · ⚽${r.goals} 🎯${r.assists} ⭐${r.mvp} ${r.clean_sheets!==undefined ? `🧱${r.clean_sheets}` : `🛡${r.defense}`}</div>
       </div>
       <div class="lb-pts">${r.points}</div>
     </div>
@@ -660,6 +683,57 @@ function renderRating() {
 }
 
 // ── BANK ──────────────────────────────────────────────────────────────────────
+function round1Html(s) {
+  const cap = S.me?.captain;
+  if (!s.r1_done) {
+    return cap ? `<div class="sect">Первый круг</div>
+<div class="card-sm" style="font-size:12px;color:#888;line-height:1.6">
+  Когда первый круг закончится, отметь, где команда в таблице лиги. Если в топ-3 — личный фонд первого круга (${rub(s.fund_r1||0)}) выплачивается сразу. Если нет — копится до конца турнира.
+  <div style="display:flex;gap:8px;margin-top:10px">
+    <button onclick="finishRound1(true)" style="flex:1;padding:9px;background:#1e3a1e;border:1px solid #22c55e;border-radius:8px;color:#22c55e;font-size:13px;font-weight:700;cursor:pointer">🏆 Мы в топ-3</button>
+    <button onclick="finishRound1(false)" style="flex:1;padding:9px;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#aaa;font-size:13px;font-weight:700;cursor:pointer">Не в топ-3</button>
+  </div>
+</div>` : "";
+  }
+  const undo = cap ? `<button onclick="undoRound1()" style="margin-top:8px;font-size:11px;color:#666;background:none;border:1px solid #333;border-radius:8px;padding:4px 10px;cursor:pointer">↩︎ Отменить итоги круга</button>` : "";
+  if (!s.r1_top3) {
+    return `<div class="sect">Первый круг</div>
+<div class="card-sm" style="font-size:12px;color:#888;line-height:1.6">
+  По итогам первого круга команда не в топ-3. Личный фонд первого круга (${rub(s.fund_r1||0)}) не выплачивается и копится до конца турнира.
+  ${undo}
+</div>`;
+  }
+  const rows = (s.payout || []).map(x => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e1e1e;font-size:13px">
+    <span>${esc(x.name)} <span style="color:#555;font-size:11px">${x.points} очк.</span></span><b style="color:#3b82f6">${rub(x.amount)}</b></div>`).join("");
+  return `<div class="sect">🏆 Выплата за первый круг</div>
+<div class="card">
+  <div style="font-size:12px;color:#888;margin-bottom:8px;line-height:1.5">Команда в топ-3 после первого круга. Фонд ${rub(s.fund_r1||0)} делится по очкам первого круга между теми, кто сыграл хотя бы половину матчей.</div>
+  ${rows || `<div style="font-size:12px;color:#555">Пока некому выплачивать</div>`}
+  ${undo}
+</div>`;
+}
+
+async function finishRound1(top3) {
+  const go = async () => {
+    try {
+      await api(`/api/seasons/${S.summary.season_id}/round1`, {method:"POST", body:JSON.stringify({top3})});
+      toast("✅ Итоги первого круга сохранены");
+      await loadBank(); await loadRating();
+    } catch(e) { toast("❌ " + e.message); }
+  };
+  const msg = top3 ? "Завершить первый круг: команда в топ-3, фонд выплачивается?" : "Завершить первый круг: команда не в топ-3, фонд копится дальше?";
+  if (tg) tg.showConfirm(msg, ok => { if (ok) go(); }); else if (confirm(msg)) go();
+}
+
+async function undoRound1() {
+  try {
+    await api(`/api/seasons/${S.summary.season_id}/round1`, {method:"POST", body:JSON.stringify({undo:true})});
+    toast("↩︎ Итоги круга отменены");
+    lbRound = 0;
+    await loadBank(); await loadRating();
+  } catch(e) { toast("❌ " + e.message); }
+}
+
 async function saveRemaining() {
   const v = parseInt(document.getElementById("remGames")?.value, 10);
   if (isNaN(v) || v < 0) { toast("Укажи число от 0"); return; }
@@ -674,6 +748,7 @@ async function loadBank() {
   try {
     S.summary = await api("/api/summary");
     renderBank();
+    if (S.lb) renderRating();  // round tabs depend on summary
   } catch(e) {}
 }
 
@@ -693,6 +768,7 @@ ${S.me?.captain ? `<div class="card-sm" style="display:flex;align-items:center;g
     style="width:64px;background:#111;border:1px solid #2e2e2e;color:#f0f0f0;border-radius:8px;padding:7px;font-size:15px;text-align:center">
   <button onclick="saveRemaining()" style="padding:8px 12px;background:#1e3a1e;border:1px solid #22c55e;border-radius:8px;color:#22c55e;font-size:13px;font-weight:700;cursor:pointer">Сохранить</button>
 </div>` : ""}
+${s.rules>=2 ? round1Html(s) : ""}
 <div class="sect">Заработали вместе</div>
 <div class="bank-grid">
   <div class="bank-cell"><div class="bank-lbl">Командный банк</div><div class="bank-val" style="color:#22c55e">${rub(s.team_bank)}</div></div>
@@ -704,6 +780,7 @@ ${S.me?.captain ? `<div class="card-sm" style="display:flex;align-items:center;g
 </div>
 <button class="btn-ghost" style="margin-top:4px" onclick="togglePremInfo()">ℹ️ Как работают премиальные</button>
 <div id="prem-info" style="display:none;margin-top:10px">
+${s.rules>=2 ? PREM_V2 : `
 <div class="card">
   <div style="font-size:15px;font-weight:800;margin-bottom:14px">💰 Как мы зарабатываем</div>
 
@@ -732,9 +809,48 @@ ${S.me?.captain ? `<div class="card-sm" style="display:flex;align-items:center;g
     <b style="color:#22c55e">🏦 Дисциплина + результат</b> → в командный банк<br>
     <span style="font-size:11px;color:#444">(тратится вместе по решению команды после сезона)</span>
   </div>
-</div>
+</div>`}
 </div>`;
 }
+
+const PREM_V2 = `
+<div class="card">
+  <div style="font-size:15px;font-weight:800;margin-bottom:14px">💰 Как мы зарабатываем</div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:3px">✅ Дисциплина — 300 ₽</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.5">Все вовремя ответили «Играю / Не играю» и никто не пропал без предупреждения.</div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🏆 Результат матча</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">
+    Ничья — 200 ₽ &nbsp;·&nbsp; Победа — 500 ₽ &nbsp;·&nbsp; Победа в 3+ мяча — 600 ₽
+  </div>
+
+  <div style="font-size:12px;font-weight:700;color:#e879f9;margin-bottom:5px">⭐ Топ-3 соперника</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.6">
+    Победа над командой из топ-3 — всё за матч ×2: командные призовые, личный фонд и личные очки каждого игрока.
+  </div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">⭐ Личные очки</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px;line-height:1.8">
+    ⚽ Гол +1 &nbsp;·&nbsp; 🎯 Ассист +1 &nbsp;·&nbsp; 🏅 MVP +3<br>
+    🏆 Победа +2 &nbsp;·&nbsp; 🤝 Ничья +1 — каждому, кто играл<br>
+    🛡 Защитник: сухой матч +2, пропустили 1 → +1, плюс +1 за каждый мяч разницы в счёте (до +3)<br>
+    🧤 Вратарь: сухой матч +3, пропустил 1–2 → +1<br>
+    🟡 Жёлтая −1 &nbsp;·&nbsp; 🔴 Красная −3
+  </div>
+  <div style="font-size:11px;color:#555;margin-bottom:12px;line-height:1.5">MVP — голосование команды после матча. За себя нельзя.</div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">💵 Призовой фонд</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.6">
+    600 ₽ с каждого матча. Если после первого круга мы в топ-3, фонд первого круга выплачивается сразу — по очкам первого круга, тем, кто сыграл хотя бы половину матчей. Если нет — копится до конца турнира.
+  </div>
+
+  <div style="border-top:1px solid #222;padding-top:10px;font-size:12px;color:#666;line-height:1.8">
+    <b style="color:#3b82f6">💰 600 ₽/матч</b> → в личный призовой фонд<br>
+    <b style="color:#22c55e">🏦 Дисциплина + результат</b> → в командный банк<br>
+    <span style="font-size:11px;color:#444">(тратится вместе по решению команды после сезона)</span>
+  </div>
+</div>`;
 
 // ── CAPTAIN ───────────────────────────────────────────────────────────────────
 async function renderCaptain() {
@@ -788,6 +904,9 @@ ${pending.map(pl=>`
     </button>
   </div>
   <input type="hidden" id="newPhase" value="season">
+  <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#ccc;margin:4px 0 12px;cursor:pointer">
+    <input type="checkbox" id="newTop" style="width:18px;height:18px"> ⭐ Соперник из топ-3 (победа ×2)
+  </label>
   <button class="btn-primary" onclick="createMatch()">Создать матч</button>
 </div>
 
@@ -801,6 +920,14 @@ ${pending.map(pl=>`
   <input class="form-in" id="edmdt" type="datetime-local">
   <label class="form-lbl">Дедлайн подтверждения</label>
   <input class="form-in" id="edmdl" type="datetime-local">
+  <label class="form-lbl">Тип матча</label>
+  <select class="form-sel" id="edphase">
+    <option value="season">📅 Сезон</option>
+    <option value="playoff">🏆 Плей-офф</option>
+  </select>
+  <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#ccc;margin:0 0 12px;cursor:pointer">
+    <input type="checkbox" id="edtop" style="width:18px;height:18px"> ⭐ Соперник из топ-3 (победа ×2)
+  </label>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <button class="btn-primary" onclick="saveEditMatch()">💾 Сохранить</button>
     <button class="btn-danger" onclick="deleteMatch()">🗑 Удалить</button>
@@ -823,7 +950,7 @@ ${pending.map(pl=>`
   <label class="form-lbl">Матч</label>
   <select class="form-sel" id="stm">${mOpts}</select>
   <label class="form-lbl">Игрок</label>
-  <select class="form-sel" id="stpl">${pOpts}</select>
+  <select class="form-sel" id="stpl" onchange="prefillStatPos()">${pOpts}</select>
   <label class="form-lbl">Участвовал?</label>
   <select class="form-sel" id="stpl2">
     <option value="1">Да, играл</option>
@@ -833,12 +960,22 @@ ${pending.map(pl=>`
     <div><label class="form-lbl">Голы</label><input class="form-in" id="stgo" type="number" min="0" value="0"></div>
     <div><label class="form-lbl">Ассисты</label><input class="form-in" id="stas" type="number" min="0" value="0"></div>
   </div>
+  <label class="form-lbl">Позиция в этом матче</label>
+  <select class="form-sel" id="stpos">
+    <option value="">— не указана</option>
+    <option value="GK">🧤 Вратарь</option>
+    <option value="DEF">🛡 Защитник</option>
+    <option value="MID">🔄 Полузащитник</option>
+    <option value="FWD">⚡ Нападающий</option>
+  </select>
+  ${isV2() ? `<div style="font-size:11px;color:#555;margin:-6px 0 12px;line-height:1.5">Очки вратаря и защитника считаются сами по счёту матча.</div>
+  <input type="hidden" id="stkp" value="0">` : `
   <label class="form-lbl">Вратарь</label>
   <select class="form-sel" id="stkp">
     <option value="0">Не вратарь / 3+ пропущено</option>
     <option value="1">1–2 пропущено (+1 очко)</option>
     <option value="3">Сухой матч (+3 очка)</option>
-  </select>
+  </select>`}
   <label class="form-lbl">Карточка</label>
   <div style="display:flex;gap:8px">
     <button id="card-none" onclick="setCard('none')" style="flex:1;padding:8px;border-radius:10px;border:2px solid #333;background:#1a1a1a;color:#aaa;font-weight:700;cursor:pointer;font-size:13px">Нет</button>
@@ -896,6 +1033,14 @@ ${pending.map(pl=>`
 </div>
 `;
   if (S.matches.length) loadEditMatch();
+  prefillStatPos();
+}
+
+function prefillStatPos() {
+  const pid = +document.getElementById("stpl")?.value;
+  const pl = (S.players || []).find(p => p.id === pid);
+  const sel = document.getElementById("stpos");
+  if (sel) sel.value = POS_FROM_PROFILE[pl?.position] || "";
 }
 
 function loadEditMatch() {
@@ -906,6 +1051,8 @@ function loadEditMatch() {
   const toLocal = s => s ? s.substring(0,16) : "";
   document.getElementById("edmdt").value = toLocal(m.match_date);
   document.getElementById("edmdl").value = toLocal(m.rsvp_deadline || "");
+  const ph = document.getElementById("edphase"); if (ph) ph.value = m.phase === "playoff" ? "playoff" : "season";
+  const tp = document.getElementById("edtop"); if (tp) tp.checked = !!m.is_top;
 }
 
 async function saveEditMatch() {
@@ -915,7 +1062,7 @@ async function saveEditMatch() {
   const mdl = document.getElementById("edmdl").value;
   if (!opp || !mdt) { toast("Укажи соперника и дату"); return; }
   try {
-    await api(`/api/matches/${mid}`, {method:"PUT", body:JSON.stringify({opponent:opp, match_date:mdt, rsvp_deadline:mdl||null})});
+    await api(`/api/matches/${mid}`, {method:"PUT", body:JSON.stringify({opponent:opp, match_date:mdt, rsvp_deadline:mdl||null, phase:document.getElementById("edphase")?.value||null, is_top:!!document.getElementById("edtop")?.checked})});
     toast("✅ Матч обновлён");
     S.matches = await api("/api/matches");
     renderMatches(); renderCaptain();
@@ -944,10 +1091,11 @@ async function createMatch() {
   const mdt = document.getElementById("mdt").value;
   const mdl = document.getElementById("mdl").value;
   const phase = document.getElementById("newPhase")?.value || "season";
+  const is_top = !!document.getElementById("newTop")?.checked;
   if (!opp||!mdt) { toast("Укажи соперника и дату"); return; }
   try {
     const s = S.seasons.find(x=>x.active)||S.seasons[0];
-    await api("/api/matches",{method:"POST",body:JSON.stringify({opponent:opp,match_date:mdt,rsvp_deadline:mdl||null,season_id:s?.id||1,phase})});
+    await api("/api/matches",{method:"POST",body:JSON.stringify({opponent:opp,match_date:mdt,rsvp_deadline:mdl||null,season_id:s?.id||1,phase,is_top})});
     toast("✅ Матч создан");
     S.matches = await api("/api/matches");
     renderMatches(); renderCaptain();
@@ -985,10 +1133,11 @@ async function saveStat() {
   const goals = +document.getElementById("stgo").value;
   const assists = +document.getElementById("stas").value;
   const kp = +document.getElementById("stkp").value;
+  const match_pos = document.getElementById("stpos")?.value || null;
   const yellow_card = _cardChoice === "yellow" ? 1 : 0;
   const red_card    = _cardChoice === "red"    ? 1 : 0;
   try {
-    await api(`/api/matches/${mid}/stats`,{method:"POST",body:JSON.stringify({player_id:pid,played,goals,assists,keeper_points:kp,yellow_card,red_card})});
+    await api(`/api/matches/${mid}/stats`,{method:"POST",body:JSON.stringify({player_id:pid,played,goals,assists,keeper_points:kp,yellow_card,red_card,match_pos})});
     toast("✅ Статистика сохранена");
     setCard("none");
     await loadRating();
@@ -1431,6 +1580,7 @@ function voteAdminHtml(m) {
   if (!S.me?.captain || m.gf === null) return "";
   const players = (m.stats || []).filter(s => s.played);
   if (!players.length) return "";
+  const v2 = m.rules >= 2;
 
   // ── Таблица: кто за кого проголосовал ──────────────────────────────────
   const details = m.vote_details || [];
@@ -1442,7 +1592,7 @@ function voteAdminHtml(m) {
     return `<tr style="border-bottom:1px solid #1e1e1e">
       <td style="padding:5px 4px;font-size:12px;color:${voted?"#eee":"#555"}">${esc(p.name)}${voted?"":"<span style='color:#555;font-size:10px'> (не голосовал)</span>"}</td>
       <td style="padding:5px 4px;font-size:12px;color:#f59e0b;text-align:center">${voted?mvpT:"—"}</td>
-      <td style="padding:5px 4px;font-size:12px;color:#3b82f6;text-align:center">${voted?defT:"—"}</td>
+      ${v2 ? "" : `<td style="padding:5px 4px;font-size:12px;color:#3b82f6;text-align:center">${voted?defT:"—"}</td>`}
     </tr>`;
   }).join("");
 
@@ -1454,7 +1604,7 @@ function voteAdminHtml(m) {
       <tr style="border-bottom:1px solid #2a2a2a">
         <th style="padding:4px;font-size:10px;color:#555;text-align:left;font-weight:600">Игрок</th>
         <th style="padding:4px;font-size:10px;color:#f59e0b;text-align:center;font-weight:600">⭐ MVP</th>
-        <th style="padding:4px;font-size:10px;color:#3b82f6;text-align:center;font-weight:600">🛡 Защита</th>
+        ${v2 ? "" : `<th style="padding:4px;font-size:10px;color:#3b82f6;text-align:center;font-weight:600">🛡 Защита</th>`}
       </tr>
     </thead>
     <tbody>${detailRows}</tbody>
@@ -1475,19 +1625,19 @@ function voteAdminHtml(m) {
       ${playerOpts}
     </select>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+  <div style="display:grid;grid-template-columns:${v2?"1fr":"1fr 1fr"};gap:8px;margin-bottom:10px">
     <div>
       <div style="font-size:11px;color:#f59e0b;margin-bottom:4px">⭐ MVP</div>
       <select id="vas-mvp" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;font-size:13px;padding:8px">
         ${playerOpts}
       </select>
     </div>
-    <div>
+    ${v2 ? "" : `<div>
       <div style="font-size:11px;color:#3b82f6;margin-bottom:4px">🛡 Защита</div>
       <select id="vas-def" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#eee;font-size:13px;padding:8px">
         ${playerOpts}
       </select>
-    </div>
+    </div>`}
   </div>
   <button onclick="saveVoteAs(${m.id})"
     style="width:100%;padding:9px;background:#1e2d3a;border:1px solid #3b82f6;border-radius:8px;color:#3b82f6;font-size:13px;font-weight:600">
@@ -1501,8 +1651,9 @@ function voteAdminHtml(m) {
 async function saveVoteAs(mid) {
   const voterId  = parseInt(document.getElementById("vas-voter")?.value);
   const mvpId    = parseInt(document.getElementById("vas-mvp")?.value);
-  const defId    = parseInt(document.getElementById("vas-def")?.value);
-  if (voterId === mvpId || voterId === defId) {
+  const defEl    = document.getElementById("vas-def");
+  const defId    = defEl ? parseInt(defEl.value) : null;
+  if (voterId === mvpId || (defId !== null && voterId === defId)) {
     toast("❌ Нельзя голосовать за себя"); return;
   }
   try {

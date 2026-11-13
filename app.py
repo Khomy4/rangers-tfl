@@ -139,6 +139,13 @@ def init():
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS voting_opened_at TEXT DEFAULT NULL")
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS phase TEXT DEFAULT 'season'")
         c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS total_games INTEGER DEFAULT 5")
+        # Scoring rules version: 1 = old (seasons before Nov 2026), 2 = new rules
+        c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS rules INTEGER DEFAULT 1")
+        c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS r1_done INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS r1_top3 INTEGER DEFAULT NULL")
+        c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS is_top INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS round INTEGER DEFAULT 1")
+        c.execute("ALTER TABLE stats ADD COLUMN IF NOT EXISTS match_pos TEXT DEFAULT NULL")
         # Backfill: start 24h clock now for any active voting that predates this feature
         c.execute(
             """
@@ -252,11 +259,96 @@ def result_bonus(gf, ga) -> int:
     return {1: 300, 2: 400, 3: 500}.get(gf - ga, 600)
 
 
+def season_rules(c: Cur, season_id) -> int:
+    c.execute("SELECT rules FROM seasons WHERE id=%s", (season_id,))
+    row = c.fetchone()
+    return (row or {}).get("rules") or 1
+
+
+def match_mult(m: dict, rules: int) -> float:
+    """Multiplier for a match. Rules 2: win over a top-3 opponent = x2 (not stacked with playoff)."""
+    is_playoff = (m.get("phase") or "season") == "playoff"
+    if rules >= 2 and m.get("is_top") and m.get("gf") is not None and m["gf"] > m["ga"]:
+        return 2.0
+    return 1.5 if is_playoff else 1.0
+
+
+def result_bonus_v2(gf, ga) -> int:
+    if gf is None or ga is None or gf < ga:
+        return 0
+    if gf == ga:
+        return 200
+    return 600 if gf - ga >= 3 else 500
+
+
+POS_FROM_PROFILE = {"Вратарь": "GK", "Защитник": "DEF", "Универсал": "MID", "Нападающий": "FWD"}
+
+
+def player_points_v2(m: dict, st: dict, profile_pos: str, is_mvp: bool) -> dict:
+    """New (rules 2) points for one player in one match."""
+    pos = st.get("match_pos") or POS_FROM_PROFILE.get(profile_pos or "", "")
+    gf, ga = m.get("gf"), m.get("ga")
+    card_pen = (st.get("yellow_card") or 0) * 1 + (st.get("red_card") or 0) * 3
+    if not st.get("played"):
+        return {"points": -card_pen, "pos": pos, "result_pts": 0, "pos_pts": 0, "mult": 1.0}
+    result_pts = pos_pts = 0
+    if gf is not None and ga is not None:
+        result_pts = 2 if gf > ga else 1 if gf == ga else 0
+        if pos == "GK":
+            pos_pts = 3 if ga == 0 else 1 if ga <= 2 else 0
+        elif pos == "DEF":
+            pos_pts = (2 if ga == 0 else 1 if ga == 1 else 0) + min(max(gf - ga, 0), 3)
+    base = (st.get("goals") or 0) + (st.get("assists") or 0) + (3 if is_mvp else 0) + result_pts + pos_pts
+    mult = match_mult(m, 2)
+    return {"points": po_round(base * mult) - card_pen, "pos": pos,
+            "result_pts": result_pts, "pos_pts": pos_pts, "mult": mult}
+
+
+def vote_winners(c: Cur, mid: int):
+    """MVP / defense winner sets for a match (captain overrides win if present)."""
+    c.execute("SELECT vtype, target_id FROM votes WHERE match_id=%s", (mid,))
+    mvp_votes, def_votes = {}, {}
+    for v in c.fetchall():
+        b = mvp_votes if v["vtype"] == "mvp" else def_votes
+        b[v["target_id"]] = b.get(v["target_id"], 0) + 1
+    c.execute("SELECT player_id, vtype, count FROM vote_override WHERE match_id=%s", (mid,))
+    ov = c.fetchall()
+    if ov:
+        mvp_votes, def_votes = {}, {}
+        for o in ov:
+            if o["count"] > 0:
+                (mvp_votes if o["vtype"] == "mvp" else def_votes)[o["player_id"]] = o["count"]
+    def top(d):
+        if not d:
+            return set()
+        mx = max(d.values())
+        return {k for k, v in d.items() if v == mx}
+    return top(mvp_votes), top(def_votes)
+
+
 def calc_finance(c: Cur, mid: int) -> dict:
     c.execute("SELECT * FROM matches WHERE id=%s", (mid,))
     m = c.fetchone()
     if not m:
         return {}
+    rules = season_rules(c, m.get("season_id") or 1)
+    if rules >= 2:
+        mult = match_mult(m, rules)
+        disc_ok = m.get("discipline_ok")
+        disc = int(300 * mult) if disc_ok else 0
+        rb = int(result_bonus_v2(m["gf"], m["ga"]) * mult)
+        return {
+            "discipline": disc,
+            "discipline_ok": disc_ok,
+            "discipline_pending": disc_ok is None,
+            "result": rb,
+            "team_bank": disc + rb,
+            "personal_fund": int(600 * mult) if m["gf"] is not None else 0,
+            "is_playoff": (m.get("phase") or "season") == "playoff",
+            "is_top": bool(m.get("is_top")),
+            "mult": mult,
+            "rules": rules,
+        }
     is_playoff = (m.get("phase") or "season") == "playoff"
     mult = 1.5 if is_playoff else 1.0
     disc_ok = m.get("discipline_ok")
@@ -276,6 +368,9 @@ def calc_finance(c: Cur, mid: int) -> dict:
         "team_bank": disc + rb,
         "personal_fund": personal,
         "is_playoff": is_playoff,
+        "is_top": bool(m.get("is_top")),
+        "mult": mult,
+        "rules": rules,
     }
 
 
@@ -295,8 +390,9 @@ class MatchIn(BaseModel):
     opponent: str
     match_date: str
     rsvp_deadline: Optional[str] = None
-    season_id: Optional[int] = 1
-    phase: Optional[str] = "season"  # "season" or "playoff"
+    season_id: Optional[int] = None  # None = active season
+    phase: Optional[str] = None  # "season" or "playoff"; None on edit = keep
+    is_top: Optional[bool] = None  # top-3 opponent; None on edit = keep
 
 class ScoreIn(BaseModel):
     gf: int
@@ -314,6 +410,7 @@ class StatIn(BaseModel):
     keeper_points: int = 0
     yellow_card: int = 0
     red_card: int = 0
+    match_pos: Optional[str] = None  # GK / DEF / MID / FWD
 
 class VoteIn(BaseModel):
     vtype: str
@@ -322,7 +419,7 @@ class VoteIn(BaseModel):
 class VoteAsIn(BaseModel):
     voter_id: int      # игрок вместо которого голосуем
     mvp_target: int    # за кого MVP
-    def_target: int    # за кого защита
+    def_target: Optional[int] = None  # за кого защита (нет в новых правилах)
 
 class LineupIn(BaseModel):
     lineup: dict  # {slot: player_id or None}
@@ -347,6 +444,10 @@ class RemainingGamesIn(BaseModel):
 
 class SeasonIn(BaseModel):
     name: str
+
+class Round1In(BaseModel):
+    top3: Optional[bool] = None
+    undo: bool = False
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -461,7 +562,7 @@ def new_season(x: SeasonIn, request: Request):
         raise HTTPException(403)
     with db() as c:
         c.execute("UPDATE seasons SET active=0")
-        c.execute("INSERT INTO seasons(name,active) VALUES(?,1) RETURNING id", (x.name,))
+        c.execute("INSERT INTO seasons(name,active,rules) VALUES(?,1,2) RETURNING id", (x.name,))
         row = c.fetchone()
         return {"id": row["id"]}
 
@@ -479,6 +580,26 @@ def set_remaining_games(sid: int, x: RemainingGamesIn, request: Request):
         played = c.fetchone()["n"]
         c.execute("UPDATE seasons SET total_games=? WHERE id=?", (played + x.remaining, sid))
     return {"ok": True, "total_games": played + x.remaining}
+
+
+@app.post("/api/seasons/{sid}/round1")
+def finish_round1(sid: int, x: Round1In, request: Request):
+    """Captain closes the first round (top3 = whether we are in the league top-3), or undoes it."""
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    with db() as c:
+        if x.undo:
+            c.execute("UPDATE seasons SET r1_done=0, r1_top3=NULL WHERE id=?", (sid,))
+            c.execute("UPDATE matches SET round=1 WHERE season_id=?", (sid,))
+        else:
+            if x.top3 is None:
+                raise HTTPException(400, "Укажи, в топ-3 команда или нет")
+            c.execute("UPDATE seasons SET r1_done=1, r1_top3=? WHERE id=?", (1 if x.top3 else 0, sid))
+            # Played matches belong to round 1, everything not yet played to round 2
+            c.execute("UPDATE matches SET round=1 WHERE season_id=? AND gf IS NOT NULL", (sid,))
+            c.execute("UPDATE matches SET round=2 WHERE season_id=? AND gf IS NULL", (sid,))
+    return {"ok": True}
 
 
 # ── Matches ───────────────────────────────────────────────────────────────────
@@ -519,6 +640,8 @@ def match_detail(mid: int, request: Request):
         d = dict(m)
         d["finance"] = calc_finance(c, mid)
         d["deadline_passed"] = deadline_passed(d)
+        rules = season_rules(c, m.get("season_id") or 1)
+        d["rules"] = rules
 
         # Exclude Босс from RSVP and stats lists
         c.execute(
@@ -571,6 +694,27 @@ def match_detail(mid: int, request: Request):
         for pl in all_players:
             st = stats_map.get(pl["id"])
             if not st:
+                continue
+            if rules >= 2:
+                is_mvp = m["voting_closed"] == 1 and pl["id"] in mvp_winners
+                pp = player_points_v2(m, st, pl["position"], is_mvp)
+                d["stats"].append({
+                    "player_id": pl["id"],
+                    "name": pl["name"],
+                    "position": pl["position"] or "",
+                    "match_pos": pp["pos"],
+                    "played": st["played"],
+                    "goals": st["goals"],
+                    "assists": st["assists"],
+                    "keeper_points": st["keeper_points"],
+                    "yellow_card": st.get("yellow_card", 0),
+                    "red_card": st.get("red_card", 0),
+                    "is_mvp": is_mvp,
+                    "is_best_defense": False,
+                    "result_pts": pp["result_pts"],
+                    "pos_pts": pp["pos_pts"],
+                    "points": pp["points"],
+                })
                 continue
             # MVP/defense points only count if voting is closed; all tied winners get points
             mvp_pts = 3 if (m["voting_closed"] == 1 and pl["id"] in mvp_winners) else 0
@@ -687,9 +831,17 @@ def add_match(x: MatchIn, request: Request):
     if not is_captain(p):
         raise HTTPException(403)
     with db() as c:
+        sid = x.season_id
+        if not sid:
+            c.execute("SELECT id FROM seasons WHERE active=1 ORDER BY id DESC LIMIT 1")
+            srow = c.fetchone()
+            sid = srow["id"] if srow else 1
+        c.execute("SELECT r1_done FROM seasons WHERE id=?", (sid,))
+        srow = c.fetchone() or {}
+        rnd = 2 if srow.get("r1_done") else 1
         c.execute(
-            "INSERT INTO matches(season_id,opponent,match_date,rsvp_deadline,phase) VALUES(?,?,?,?,?) RETURNING id",
-            (x.season_id or 1, x.opponent, x.match_date, x.rsvp_deadline, x.phase or "season"),
+            "INSERT INTO matches(season_id,opponent,match_date,rsvp_deadline,phase,is_top,round) VALUES(?,?,?,?,?,?,?) RETURNING id",
+            (sid, x.opponent, x.match_date, x.rsvp_deadline, x.phase or "season", 1 if x.is_top else 0, rnd),
         )
         row = c.fetchone()
         return {"id": row["id"]}
@@ -702,8 +854,10 @@ def update_match(mid: int, x: MatchIn, request: Request):
         raise HTTPException(403)
     with db() as c:
         c.execute(
-            "UPDATE matches SET opponent=?,match_date=?,rsvp_deadline=?,phase=? WHERE id=?",
-            (x.opponent, x.match_date, x.rsvp_deadline, x.phase or "season", mid),
+            "UPDATE matches SET opponent=?,match_date=?,rsvp_deadline=?,"
+            "phase=COALESCE(?,phase), is_top=COALESCE(?,is_top) WHERE id=?",
+            (x.opponent, x.match_date, x.rsvp_deadline, x.phase,
+             None if x.is_top is None else (1 if x.is_top else 0), mid),
         )
     return {"ok": True}
 
@@ -767,12 +921,16 @@ def vote_as(mid: int, x: VoteAsIn, request: Request):
         if m["gf"] is None:
             raise HTTPException(403, "Матч ещё не сыгран")
         voter = x.voter_id
-        if x.mvp_target == voter or x.def_target == voter:
+        mvp_only = season_rules(c, m.get("season_id") or 1) >= 2
+        if not mvp_only and x.def_target is None:
+            raise HTTPException(400, "Выбери игрока для защиты")
+        if x.mvp_target == voter or (not mvp_only and x.def_target == voter):
             raise HTTPException(400, "Нельзя голосовать за себя")
         # Удаляем старые голоса этого игрока, пишем новые
         c.execute("DELETE FROM votes WHERE match_id=? AND voter_id=?", (mid, voter))
         c.execute("INSERT INTO votes VALUES(?,?,?,?)", (mid, voter, "mvp", x.mvp_target))
-        c.execute("INSERT INTO votes VALUES(?,?,?,?)", (mid, voter, "defense", x.def_target))
+        if not mvp_only:
+            c.execute("INSERT INTO votes VALUES(?,?,?,?)", (mid, voter, "defense", x.def_target))
         c.execute(
             "UPDATE matches SET voting_opened_at=? WHERE id=? AND voting_opened_at IS NULL",
             (datetime.utcnow().isoformat(), mid)
@@ -825,14 +983,16 @@ def save_stats(mid: int, x: StatIn, request: Request):
         raise HTTPException(403)
     with db() as c:
         c.execute(
-            """INSERT INTO stats(match_id,player_id,played,goals,assists,keeper_points,yellow_card,red_card)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+            """INSERT INTO stats(match_id,player_id,played,goals,assists,keeper_points,yellow_card,red_card,match_pos)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT(match_id,player_id) DO UPDATE
                SET played=EXCLUDED.played, goals=EXCLUDED.goals,
                    assists=EXCLUDED.assists, keeper_points=EXCLUDED.keeper_points,
-                   yellow_card=EXCLUDED.yellow_card, red_card=EXCLUDED.red_card""",
+                   yellow_card=EXCLUDED.yellow_card, red_card=EXCLUDED.red_card,
+                   match_pos=EXCLUDED.match_pos""",
             (mid, x.player_id, x.played, x.goals, x.assists, x.keeper_points,
-             x.yellow_card, x.red_card),
+             x.yellow_card, x.red_card,
+             x.match_pos if x.match_pos in ("GK", "DEF", "MID", "FWD") else None),
         )
     return {"ok": True}
 
@@ -841,10 +1001,11 @@ def save_stats(mid: int, x: StatIn, request: Request):
 
 def maybe_close_voting(c, mid: int):
     """Auto-close voting only when 100% of players voted for both categories."""
-    c.execute("SELECT voting_closed FROM matches WHERE id=?", (mid,))
+    c.execute("SELECT voting_closed, season_id FROM matches WHERE id=?", (mid,))
     m = c.fetchone()
     if not m or m["voting_closed"] != 0:
         return
+    mvp_only = season_rules(c, m.get("season_id") or 1) >= 2
     c.execute("SELECT COUNT(*) AS n FROM stats WHERE match_id=? AND played=1", (mid,))
     eligible = c.fetchone()["n"]
     if eligible == 0:
@@ -853,7 +1014,7 @@ def maybe_close_voting(c, mid: int):
     mvp_n = c.fetchone()["n"]
     c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='defense'", (mid,))
     def_n = c.fetchone()["n"]
-    if min(mvp_n, def_n) >= eligible:
+    if (mvp_n if mvp_only else min(mvp_n, def_n)) >= eligible:
         c.execute("UPDATE matches SET voting_closed=1 WHERE id=?", (mid,))
 
 
@@ -882,6 +1043,8 @@ def vote(mid: int, x: VoteIn, request: Request):
             raise HTTPException(403, "Матч ещё не сыгран")
         if x.vtype not in ("mvp", "defense"):
             raise HTTPException(400)
+        if x.vtype == "defense" and season_rules(c, m.get("season_id") or 1) >= 2:
+            raise HTTPException(400, "Голосования за защиту больше нет")
         if x.target_id == p["id"]:
             raise HTTPException(400, "Нельзя голосовать за себя")
         is_boss = (p.get("position") or "") == "Босс"
@@ -1019,14 +1182,58 @@ def reset_vote(mid: int, request: Request):
 
 # ── Leaderboard ───────────────────────────────────────────────────────────────
 
+def leaderboard_v2(c: Cur, season_id: int, rnd: Optional[int] = None) -> list:
+    """Rules 2: points are the sum of each match's points (same numbers as the match card)."""
+    q = "SELECT * FROM matches WHERE season_id=%s AND gf IS NOT NULL"
+    args = [season_id]
+    if rnd in (1, 2):
+        q += " AND round=%s"
+        args.append(rnd)
+    c.execute(q, args)
+    ms = c.fetchall()
+    c.execute("SELECT * FROM players WHERE approved=1 AND COALESCE(position,'') != 'Босс'")
+    players = c.fetchall()
+    rows = {pl["id"]: dict(id=pl["id"], name=pl["name"], position=pl["position"] or "",
+                           games=0, total=len(ms), goals=0, assists=0, mvp=0, defense=0,
+                           clean_sheets=0, wins=0, yellow_cards=0, red_cards=0, points=0)
+            for pl in players}
+    prof = {pl["id"]: pl["position"] for pl in players}
+    for m in ms:
+        mvp_w, _ = vote_winners(c, m["id"])
+        c.execute("SELECT * FROM stats WHERE match_id=%s", (m["id"],))
+        for st in c.fetchall():
+            r = rows.get(st["player_id"])
+            if not r:
+                continue
+            is_mvp = m["voting_closed"] == 1 and st["player_id"] in mvp_w
+            pp = player_points_v2(m, st, prof.get(st["player_id"]), is_mvp)
+            r["points"] += pp["points"]
+            r["yellow_cards"] += st.get("yellow_card") or 0
+            r["red_cards"] += st.get("red_card") or 0
+            if st.get("played"):
+                r["games"] += 1
+                r["goals"] += st["goals"] or 0
+                r["assists"] += st["assists"] or 0
+                r["mvp"] += 1 if is_mvp else 0
+                r["wins"] += 1 if m["gf"] > m["ga"] else 0
+                if m["ga"] == 0 and pp["pos"] in ("GK", "DEF"):
+                    r["clean_sheets"] += 1
+    out = sorted(rows.values(), key=lambda r: (-r["points"], -r["goals"], -r["assists"]))
+    for i, r in enumerate(out, 1):
+        r["rank"] = i
+    return out
+
+
 @app.get("/api/leaderboard")
-def leaderboard(request: Request, season_id: Optional[int] = None):
+def leaderboard(request: Request, season_id: Optional[int] = None, round: Optional[int] = None):
     get_player(request)
     with db() as c:
         if season_id is None:
             c.execute("SELECT id FROM seasons WHERE active=1")
             row = c.fetchone()
             season_id = row["id"] if row else 1
+        if season_rules(c, season_id) >= 2:
+            return leaderboard_v2(c, season_id, round)
         c.execute("SELECT id, phase FROM matches WHERE season_id=?", (season_id,))
         match_rows = c.fetchall()
         match_ids = [r["id"] for r in match_rows]
@@ -1164,7 +1371,31 @@ def summary(request: Request, season_id: Optional[int] = None):
         srow = c.fetchone()
         total = (srow or {}).get("total_games") or 5
         total = max(total, len(ids))
+        c.execute("SELECT * FROM seasons WHERE id=?", (season_id,))
+        season = c.fetchone() or {}
+        rules = season.get("rules") or 1
+        extra = {"rules": rules}
+        if rules >= 2:
+            c.execute("SELECT id, round FROM matches WHERE gf IS NOT NULL AND season_id=?", (season_id,))
+            rmap = {r["id"]: r["round"] or 1 for r in c.fetchall()}
+            fund_r1 = sum(f["personal_fund"] for i, f in zip(ids, fin) if rmap.get(i, 1) == 1)
+            extra.update(r1_done=bool(season.get("r1_done")), r1_top3=season.get("r1_top3"),
+                         fund_r1=fund_r1, payout=[], paid_out=0)
+            if season.get("r1_done") and season.get("r1_top3"):
+                # Paid by round-1 points, among players who played at least half of round-1 games
+                lb = leaderboard_v2(c, season_id, 1)
+                n1 = sum(1 for v in rmap.values() if v == 1)
+                elig = [r for r in lb if r["points"] > 0 and r["games"] * 2 >= n1]
+                tot = sum(r["points"] for r in elig)
+                if tot > 0 and fund_r1 > 0:
+                    pay = [{"id": r["id"], "name": r["name"], "points": r["points"],
+                            "amount": int(fund_r1 * r["points"] / tot)} for r in elig]
+                    # give rounding remainder to the leader so the sum matches the fund
+                    pay[0]["amount"] += fund_r1 - sum(x["amount"] for x in pay)
+                    extra["payout"] = pay
+                    extra["paid_out"] = fund_r1
         return {
+            **extra,
             "season_id": season_id,
             "played": len(ids),
             "total_games": total,
