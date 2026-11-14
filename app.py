@@ -17,6 +17,17 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 CAPTAIN_ID = int(os.getenv("CAPTAIN_TELEGRAM_ID", "0") or 0)
 DEV = os.getenv("DEV_MODE", "false").lower() == "true"
+APP_TZ = os.getenv("APP_TZ", "Europe/Moscow")
+
+
+def now_local() -> datetime:
+    """Current time in the team's timezone (match dates and deadlines are entered in it)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(APP_TZ)).replace(tzinfo=None)
+    except Exception:
+        from datetime import timedelta
+        return datetime.utcnow() + timedelta(hours=3)  # Moscow is UTC+3 all year
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
@@ -141,6 +152,7 @@ def init():
         c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS total_games INTEGER DEFAULT 5")
         # Scoring rules version: 1 = old (seasons before Nov 2026), 2 = new rules
         c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS rules INTEGER DEFAULT 1")
+        c.execute("ALTER TABLE seasons ALTER COLUMN rules SET DEFAULT 2")
         c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS r1_done INTEGER DEFAULT 0")
         c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS r1_top3 INTEGER DEFAULT NULL")
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS is_top INTEGER DEFAULT 0")
@@ -195,7 +207,7 @@ def init():
             c.execute("UPDATE players SET approved=1 WHERE telegram_id=?", (CAPTAIN_ID,))
         c.execute("SELECT COUNT(*) AS n FROM seasons")
         if c.fetchone()["n"] == 0:
-            c.execute("INSERT INTO seasons(name,active) VALUES('Сезон 1',1)")
+            c.execute("INSERT INTO seasons(name,active,rules) VALUES('Сезон 1',1,2)")
 
 
 init()
@@ -238,6 +250,14 @@ def get_player(request: Request):
             c.execute("SELECT * FROM players WHERE telegram_id=?", (uid,))
             p = c.fetchone()
         return dict(p)
+
+
+def get_member(request: Request):
+    """Logged-in player who has been approved by the captain."""
+    p = get_player(request)
+    if not p.get("approved") and not is_captain(p):
+        raise HTTPException(403, "Капитан ещё не подтвердил твой аккаунт")
+    return p
 
 
 def is_captain(p: dict) -> bool:
@@ -290,7 +310,7 @@ def player_points_v2(m: dict, st: dict, profile_pos: str, is_mvp: bool) -> dict:
     gf, ga = m.get("gf"), m.get("ga")
     card_pen = (st.get("yellow_card") or 0) * 1 + (st.get("red_card") or 0) * 3
     if not st.get("played"):
-        return {"points": -card_pen, "pos": pos, "result_pts": 0, "pos_pts": 0, "mult": 1.0}
+        return {"points": 0, "pos": pos, "result_pts": 0, "pos_pts": 0, "mult": 1.0}
     result_pts = pos_pts = 0
     if gf is not None and ga is not None:
         result_pts = 2 if gf > ga else 1 if gf == ga else 0
@@ -379,7 +399,7 @@ def deadline_passed(m) -> bool:
     if not dl:
         return False
     try:
-        return datetime.utcnow() > datetime.fromisoformat(str(dl))
+        return now_local() > datetime.fromisoformat(str(dl))
     except Exception:
         return False
 
@@ -445,6 +465,9 @@ class RemainingGamesIn(BaseModel):
 class SeasonIn(BaseModel):
     name: str
 
+class RulesIn(BaseModel):
+    rules: int
+
 class Round1In(BaseModel):
     top3: Optional[bool] = None
     undo: bool = False
@@ -466,7 +489,7 @@ def me(request: Request):
 @app.get("/api/players")
 def players(request: Request):
     """Public list: approved, non-Босс players only."""
-    get_player(request)
+    get_member(request)
     with db() as c:
         c.execute(
             "SELECT * FROM players WHERE approved=1 AND COALESCE(position,'') != 'Босс' ORDER BY name"
@@ -531,6 +554,9 @@ def delete_player(pid: int, request: Request):
         c.execute("DELETE FROM rsvp WHERE player_id=?", (pid,))
         c.execute("DELETE FROM stats WHERE player_id=?", (pid,))
         c.execute("DELETE FROM votes WHERE voter_id=? OR target_id=?", (pid, pid))
+        c.execute("DELETE FROM vote_override WHERE player_id=?", (pid,))
+        for tbl in ("lineup", "lineup2", "lineup_subs", "lineup_subs2"):
+            c.execute(f"DELETE FROM {tbl} WHERE player_id=?", (pid,))
         c.execute("DELETE FROM players WHERE id=?", (pid,))
     return {"ok": True}
 
@@ -549,7 +575,7 @@ def set_position(pid: int, x: PositionIn, request: Request):
 
 @app.get("/api/seasons")
 def seasons(request: Request):
-    get_player(request)
+    get_member(request)
     with db() as c:
         c.execute("SELECT * FROM seasons ORDER BY id")
         return c.fetchall()
@@ -582,6 +608,19 @@ def set_remaining_games(sid: int, x: RemainingGamesIn, request: Request):
     return {"ok": True, "total_games": played + x.remaining}
 
 
+@app.put("/api/seasons/{sid}/rules")
+def set_season_rules(sid: int, x: RulesIn, request: Request):
+    """Captain switches a season between old (1) and new (2) scoring rules."""
+    p = get_player(request)
+    if not is_captain(p):
+        raise HTTPException(403)
+    if x.rules not in (1, 2):
+        raise HTTPException(400, "Неизвестные правила")
+    with db() as c:
+        c.execute("UPDATE seasons SET rules=? WHERE id=?", (x.rules, sid))
+    return {"ok": True}
+
+
 @app.post("/api/seasons/{sid}/round1")
 def finish_round1(sid: int, x: Round1In, request: Request):
     """Captain closes the first round (top3 = whether we are in the league top-3), or undoes it."""
@@ -589,16 +628,21 @@ def finish_round1(sid: int, x: Round1In, request: Request):
     if not is_captain(p):
         raise HTTPException(403)
     with db() as c:
+        c.execute("SELECT r1_done FROM seasons WHERE id=?", (sid,))
+        srow = c.fetchone()
+        if not srow:
+            raise HTTPException(404)
         if x.undo:
             c.execute("UPDATE seasons SET r1_done=0, r1_top3=NULL WHERE id=?", (sid,))
-            c.execute("UPDATE matches SET round=1 WHERE season_id=?", (sid,))
+            # Not-yet-played matches go back to round 1; played round-2 matches stay in round 2
+            c.execute("UPDATE matches SET round=1 WHERE season_id=? AND gf IS NULL", (sid,))
         else:
             if x.top3 is None:
                 raise HTTPException(400, "Укажи, в топ-3 команда или нет")
             c.execute("UPDATE seasons SET r1_done=1, r1_top3=? WHERE id=?", (1 if x.top3 else 0, sid))
-            # Played matches belong to round 1, everything not yet played to round 2
-            c.execute("UPDATE matches SET round=1 WHERE season_id=? AND gf IS NOT NULL", (sid,))
-            c.execute("UPDATE matches SET round=2 WHERE season_id=? AND gf IS NULL", (sid,))
+            if not srow.get("r1_done"):
+                # Closing the round: matches not played yet move to round 2
+                c.execute("UPDATE matches SET round=2 WHERE season_id=? AND gf IS NULL AND round=1", (sid,))
     return {"ok": True}
 
 
@@ -606,7 +650,7 @@ def finish_round1(sid: int, x: Round1In, request: Request):
 
 @app.get("/api/matches")
 def matches(request: Request, season_id: Optional[int] = None):
-    get_player(request)
+    get_member(request)
     with db() as c:
         if season_id is None:
             c.execute("SELECT id FROM seasons WHERE active=1")
@@ -628,7 +672,7 @@ def matches(request: Request, season_id: Optional[int] = None):
 
 @app.get("/api/matches/{mid}")
 def match_detail(mid: int, request: Request):
-    p = get_player(request)
+    p = get_member(request)
     # Auto-close voting if 24h from match_date have passed
     with db() as c:
         maybe_close_voting(c, mid)
@@ -752,7 +796,7 @@ def match_detail(mid: int, request: Request):
             from datetime import datetime
             try:
                 match_dt = datetime.fromisoformat(m["match_date"])
-                voting_expired = (datetime.utcnow() - match_dt).total_seconds() >= 172800
+                voting_expired = (now_local() - match_dt).total_seconds() >= 172800
             except Exception:
                 pass
         d["voting_expired"] = voting_expired
@@ -798,6 +842,7 @@ def match_detail(mid: int, request: Request):
 
         # Captain sees live vote breakdown
         if is_captain(p):
+            d["raw_stats"] = list(stats_map.values())
             name_map = {pl["id"]: pl["name"] for pl in all_players}
             def breakdown(vdict):
                 items = [{"id": k, "name": name_map.get(k, "?"), "count": v} for k, v in vdict.items()]
@@ -868,9 +913,9 @@ def delete_match(mid: int, request: Request):
     if not is_captain(p):
         raise HTTPException(403)
     with db() as c:
-        c.execute("DELETE FROM rsvp WHERE match_id=?", (mid,))
-        c.execute("DELETE FROM stats WHERE match_id=?", (mid,))
-        c.execute("DELETE FROM votes WHERE match_id=?", (mid,))
+        for tbl in ("rsvp", "stats", "votes", "vote_override", "lineup", "lineup2",
+                    "lineup_subs", "lineup_subs2", "match_notes", "match_formation"):
+            c.execute(f"DELETE FROM {tbl} WHERE match_id=?", (mid,))
         c.execute("DELETE FROM matches WHERE id=?", (mid,))
     return {"ok": True}
 
@@ -926,6 +971,11 @@ def vote_as(mid: int, x: VoteAsIn, request: Request):
             raise HTTPException(400, "Выбери игрока для защиты")
         if x.mvp_target == voter or (not mvp_only and x.def_target == voter):
             raise HTTPException(400, "Нельзя голосовать за себя")
+        targets = [x.mvp_target] + ([] if mvp_only else [x.def_target])
+        for t in targets:
+            c.execute("SELECT 1 AS ok FROM stats WHERE match_id=? AND player_id=? AND played=1", (mid, t))
+            if not c.fetchone():
+                raise HTTPException(400, "Голосовать можно только за игроков матча")
         # Удаляем старые голоса этого игрока, пишем новые
         c.execute("DELETE FROM votes WHERE match_id=? AND voter_id=?", (mid, voter))
         c.execute("INSERT INTO votes VALUES(?,?,?,?)", (mid, voter, "mvp", x.mvp_target))
@@ -943,7 +993,7 @@ def vote_as(mid: int, x: VoteAsIn, request: Request):
 
 @app.post("/api/matches/{mid}/rsvp")
 def rsvp(mid: int, x: RsvpIn, request: Request):
-    p = get_player(request)
+    p = get_member(request)
     if x.status not in ("yes", "no"):
         raise HTTPException(400, "Invalid status")
     with db() as c:
@@ -981,7 +1031,12 @@ def save_stats(mid: int, x: StatIn, request: Request):
     p = get_player(request)
     if not is_captain(p):
         raise HTTPException(403)
+    match_pos = x.match_pos if x.match_pos in ("GK", "DEF", "MID", "FWD") else None
     with db() as c:
+        if match_pos is None:
+            c.execute("SELECT position FROM players WHERE id=?", (x.player_id,))
+            prow = c.fetchone() or {}
+            match_pos = POS_FROM_PROFILE.get(prow.get("position") or "")
         c.execute(
             """INSERT INTO stats(match_id,player_id,played,goals,assists,keeper_points,yellow_card,red_card,match_pos)
                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
@@ -991,8 +1046,7 @@ def save_stats(mid: int, x: StatIn, request: Request):
                    yellow_card=EXCLUDED.yellow_card, red_card=EXCLUDED.red_card,
                    match_pos=EXCLUDED.match_pos""",
             (mid, x.player_id, x.played, x.goals, x.assists, x.keeper_points,
-             x.yellow_card, x.red_card,
-             x.match_pos if x.match_pos in ("GK", "DEF", "MID", "FWD") else None),
+             x.yellow_card, x.red_card, match_pos),
         )
     return {"ok": True}
 
@@ -1010,9 +1064,12 @@ def maybe_close_voting(c, mid: int):
     eligible = c.fetchone()["n"]
     if eligible == 0:
         return
-    c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='mvp'", (mid,))
+    played_voters = ("SELECT COUNT(DISTINCT v.voter_id) AS n FROM votes v "
+                     "JOIN stats s ON s.match_id=v.match_id AND s.player_id=v.voter_id AND s.played=1 "
+                     "WHERE v.match_id=? AND v.vtype=?")
+    c.execute(played_voters, (mid, "mvp"))
     mvp_n = c.fetchone()["n"]
-    c.execute("SELECT COUNT(DISTINCT voter_id) AS n FROM votes WHERE match_id=? AND vtype='defense'", (mid,))
+    c.execute(played_voters, (mid, "defense"))
     def_n = c.fetchone()["n"]
     if (mvp_n if mvp_only else min(mvp_n, def_n)) >= eligible:
         c.execute("UPDATE matches SET voting_closed=1 WHERE id=?", (mid,))
@@ -1020,7 +1077,7 @@ def maybe_close_voting(c, mid: int):
 
 @app.post("/api/matches/{mid}/vote")
 def vote(mid: int, x: VoteIn, request: Request):
-    p = get_player(request)
+    p = get_member(request)
     with db() as c:
         c.execute("SELECT * FROM matches WHERE id=?", (mid,))
         m = c.fetchone()
@@ -1033,7 +1090,7 @@ def vote(mid: int, x: VoteIn, request: Request):
             from datetime import datetime
             try:
                 match_dt = datetime.fromisoformat(m["match_date"])
-                if (datetime.utcnow() - match_dt).total_seconds() >= 172800:
+                if (now_local() - match_dt).total_seconds() >= 172800:
                     raise HTTPException(403, "Время голосования истекло")
             except HTTPException:
                 raise
@@ -1047,6 +1104,9 @@ def vote(mid: int, x: VoteIn, request: Request):
             raise HTTPException(400, "Голосования за защиту больше нет")
         if x.target_id == p["id"]:
             raise HTTPException(400, "Нельзя голосовать за себя")
+        c.execute("SELECT 1 AS ok FROM stats WHERE match_id=? AND player_id=? AND played=1", (mid, x.target_id))
+        if not c.fetchone():
+            raise HTTPException(400, "Этот игрок не играл в матче")
         is_boss = (p.get("position") or "") == "Босс"
         if not is_captain(p) and not is_boss:
             c.execute(
@@ -1176,6 +1236,12 @@ def reset_vote(mid: int, request: Request):
     if not is_captain(p):
         raise HTTPException(403)
     with db() as c:
+        c.execute("SELECT voting_closed FROM matches WHERE id=?", (mid,))
+        m = c.fetchone()
+        if not m:
+            raise HTTPException(404)
+        if m["voting_closed"]:
+            raise HTTPException(403, "Голосование уже закрыто")
         c.execute("DELETE FROM votes WHERE match_id=? AND voter_id=?", (mid, p["id"]))
     return {"ok": True}
 
@@ -1226,7 +1292,7 @@ def leaderboard_v2(c: Cur, season_id: int, rnd: Optional[int] = None) -> list:
 
 @app.get("/api/leaderboard")
 def leaderboard(request: Request, season_id: Optional[int] = None, round: Optional[int] = None):
-    get_player(request)
+    get_member(request)
     with db() as c:
         if season_id is None:
             c.execute("SELECT id FROM seasons WHERE active=1")
@@ -1356,7 +1422,7 @@ def leaderboard(request: Request, season_id: Optional[int] = None, round: Option
 
 @app.get("/api/summary")
 def summary(request: Request, season_id: Optional[int] = None):
-    get_player(request)
+    get_member(request)
     with db() as c:
         if season_id is None:
             c.execute("SELECT id FROM seasons WHERE active=1")

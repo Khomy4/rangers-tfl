@@ -253,7 +253,7 @@ let detailMatchId = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const rub = n => new Intl.NumberFormat("ru-RU").format(n) + " ₽";
-const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const esc = s => String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 
 function toast(msg, ms=2600) {
   const el = document.getElementById("toast");
@@ -263,7 +263,12 @@ function toast(msg, ms=2600) {
 
 async function api(url, opts={}) {
   const r = await fetch(url, {...opts, headers:{...H,...(opts.headers||{})}});
-  if (!r.ok) throw new Error(await r.text() || String(r.status));
+  if (!r.ok) {
+    const t = await r.text();
+    let msg = t || String(r.status);
+    try { const j = JSON.parse(t); if (j && j.detail) msg = typeof j.detail === "string" ? j.detail : "Проверь введённые данные"; } catch(_) {}
+    throw new Error(msg);
+  }
   return r.json();
 }
 
@@ -289,11 +294,7 @@ function back() { goPage(prevPage); }
 // ── Boot ──────────────────────────────────────────────────────────────────────
 async function boot() {
   try {
-    [S.me, S.players, S.matches, S.seasons] = await Promise.all([
-      api("/api/me"), api("/api/players"), api("/api/matches"), api("/api/seasons")
-    ]);
-    const s = S.seasons.find(x => x.active) || S.seasons[0];
-    if (s) document.getElementById("seasonBadge").textContent = s.name;
+    S.me = await api("/api/me");
     document.getElementById("hdrSub").textContent =
       S.me.player.name + (S.me.captain ? " · капитан" : "");
 
@@ -307,6 +308,12 @@ async function boot() {
          </div>`;
       return;
     }
+
+    [S.players, S.matches, S.seasons] = await Promise.all([
+      api("/api/players"), api("/api/matches"), api("/api/seasons")
+    ]);
+    const s = S.seasons.find(x => x.active) || S.seasons[0];
+    if (s) document.getElementById("seasonBadge").textContent = s.name;
 
     if (S.me.captain) document.getElementById("capNavBtn").style.display = "";
     renderMatches();
@@ -575,7 +582,7 @@ ${S.me.captain && scored && !m.voting_closed && m.vote_counts ? `
   <div style="font-weight:700;color:#aaa;margin-bottom:8px">📊 Ход голосования (только ты видишь)</div>
   <div style="margin-bottom:4px;font-size:11px;color:#555">Проголосовало: MVP ${m.vote_progress.mvp_voted}/${m.vote_progress.eligible}${m.rules>=2 ? "" : ` · Защита ${m.vote_progress.def_voted}/${m.vote_progress.eligible}`}</div>
   ${m.voting_opened_at ? (() => {
-    const deadline = new Date(new Date(m.voting_opened_at + "Z").getTime() + 172800000);
+    const deadline = new Date(new Date(m.voting_opened_at).getTime() + 172800000);
     const diff = deadline - Date.now();
     if (diff <= 0) return `<div style="font-size:11px;color:#e05060;margin-bottom:6px">⏱ Время вышло — прими решение</div>`;
     const h = Math.floor(diff/3600000), mn = Math.floor((diff%3600000)/60000);
@@ -658,6 +665,7 @@ let lbRound = 0;  // 0 = whole season, 1 / 2 = round
 async function setLbRound(r) { lbRound = r; await loadRating(); }
 async function loadRating() {
   try {
+    if (!(isV2() && S.summary?.r1_done)) lbRound = 0;
     S.lb = await api("/api/leaderboard" + (lbRound ? `?round=${lbRound}` : ""));
     renderRating();
   } catch(e) {}
@@ -772,7 +780,7 @@ ${s.rules>=2 ? round1Html(s) : ""}
 <div class="sect">Заработали вместе</div>
 <div class="bank-grid">
   <div class="bank-cell"><div class="bank-lbl">Командный банк</div><div class="bank-val" style="color:#22c55e">${rub(s.team_bank)}</div></div>
-  <div class="bank-cell"><div class="bank-lbl">Личный фонд</div><div class="bank-val" style="color:#3b82f6">${rub(s.personal_fund)}</div></div>
+  <div class="bank-cell"><div class="bank-lbl">Личный фонд${s.paid_out ? " (остаток)" : ""}</div><div class="bank-val" style="color:#3b82f6">${rub(s.personal_fund - (s.paid_out||0))}</div>${s.paid_out ? `<div style="font-size:11px;color:#555;margin-top:4px">${rub(s.paid_out)} выплачено за 1 круг</div>` : ""}</div>
 </div>
 <div class="card-sm" style="font-size:12px;color:#555;text-align:center;line-height:1.6">
   Командный банк тратится вместе после турнира<br>
@@ -837,6 +845,7 @@ async function renderCaptain() {
     ]);
   } catch(e) { loadErr = e.message; }
 
+  window._capPlayers = allPlayers;
   const errHtml = loadErr ? `<div class="card-sm" style="color:#f87171;font-size:12px;text-align:center;margin-bottom:8px">⚠️ Ошибка загрузки: ${esc(loadErr)}</div>` : "";
 
   const pendingHtml = pending.length ? `
@@ -917,7 +926,7 @@ ${pending.map(pl=>`
 <div class="sect">Статистика игрока</div>
 <div class="card">
   <label class="form-lbl">Матч</label>
-  <select class="form-sel" id="stm">${mOpts}</select>
+  <select class="form-sel" id="stm" onchange="prefillStatPos()">${mOpts}</select>
   <label class="form-lbl">Игрок</label>
   <select class="form-sel" id="stpl" onchange="prefillStatPos()">${pOpts}</select>
   <label class="form-lbl">Участвовал?</label>
@@ -985,7 +994,7 @@ ${pending.map(pl=>`
           <option ${p.position==="Универсал"?"selected":""} value="Универсал">🔄 Универсал</option>
           <option ${p.position==="Босс"?"selected":""} value="Босс">👑 Босс</option>
         </select>
-        <button class="btn-danger btn-sm" style="padding:5px 10px;font-size:11px" onclick="kickPl(${p.id},'${esc(p.name)}')">🗑</button>
+        <button class="btn-danger btn-sm" style="padding:5px 10px;font-size:11px" onclick="kickPl(${p.id})">🗑</button>
       </div>
     </div>
   `).join("")}
@@ -993,6 +1002,18 @@ ${pending.map(pl=>`
 <div class="card-sm" style="font-size:11px;color:#555;line-height:1.6;text-align:center">
   👑 «Босс» — игрок скрыт от всей командной статистики
 </div>
+
+${(() => {
+  const cs = S.seasons.find(x => x.active) || S.seasons[0];
+  if (!cs) return "";
+  const v2 = (cs.rules || 1) >= 2;
+  const btn = (val, label, on) => `<button onclick="setSeasonRules(${cs.id},${val})" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:2px solid ${on?"#22c55e":"#333"};background:${on?"#1e3a1e":"#1a1a1a"};color:${on?"#22c55e":"#666"}">${label}</button>`;
+  return `<div class="sect">Правила сезона</div>
+<div class="card">
+  <div style="font-size:12px;color:#888;margin-bottom:10px;line-height:1.5">${esc(cs.name)}: сейчас <b style="color:${v2?"#22c55e":"#f59e0b"}">${v2?"новые правила":"старые правила"}</b>. Очки и призовые всех матчей сезона пересчитываются сразу.</div>
+  <div style="display:flex;gap:8px">${btn(2,"Новые правила",v2)}${btn(1,"Старые правила",!v2)}</div>
+</div>`;
+})()}
 
 <div class="sect">Новый сезон</div>
 <div class="card">
@@ -1005,11 +1026,27 @@ ${pending.map(pl=>`
   prefillStatPos();
 }
 
-function prefillStatPos() {
+const _statCache = {};
+async function prefillStatPos() {
+  const mid = +document.getElementById("stm")?.value;
   const pid = +document.getElementById("stpl")?.value;
   const pl = (S.players || []).find(p => p.id === pid);
-  const sel = document.getElementById("stpos");
-  if (sel) sel.value = POS_FROM_PROFILE[pl?.position] || "";
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  // defaults for a player without saved stats
+  set("stpos", POS_FROM_PROFILE[pl?.position] || "");
+  set("stpl2", "1"); set("stgo", 0); set("stas", 0); set("stkp", 0); setCard("none");
+  if (!mid || !pid) return;
+  try {
+    if (!_statCache[mid]) _statCache[mid] = (await api(`/api/matches/${mid}`)).raw_stats || [];
+  } catch(e) { return; }
+  // the captain may have switched player/match while loading
+  if (+document.getElementById("stm")?.value !== mid || +document.getElementById("stpl")?.value !== pid) return;
+  const st = _statCache[mid].find(x => x.player_id === pid);
+  if (!st) return;
+  set("stpl2", st.played ? "1" : "0"); set("stgo", st.goals || 0); set("stas", st.assists || 0);
+  set("stkp", st.keeper_points || 0);
+  if (st.match_pos) set("stpos", st.match_pos);
+  setCard(st.red_card ? "red" : st.yellow_card ? "yellow" : "none");
 }
 
 function loadEditMatch() {
@@ -1108,7 +1145,7 @@ async function saveStat() {
   try {
     await api(`/api/matches/${mid}/stats`,{method:"POST",body:JSON.stringify({player_id:pid,played,goals,assists,keeper_points:kp,yellow_card,red_card,match_pos})});
     toast("✅ Статистика сохранена");
-    setCard("none");
+    delete _statCache[mid];
     await loadRating();
     if (activePage==="detail"&&detailMatchId===mid) renderDetail(mid);
   } catch(e) { toast("❌ "+e.message); }
@@ -1165,7 +1202,8 @@ async function rejectPl(pid) {
   } catch(e) { toast("❌ " + e.message); }
 }
 
-async function kickPl(pid, name) {
+async function kickPl(pid) {
+  const name = ((window._capPlayers || []).find(p => p.id === pid) || {}).name || "игрока";
   const doKick = async () => {
     try {
       await api(`/api/players/${pid}`, {method:"DELETE"});
@@ -1188,6 +1226,20 @@ async function setPos(pid, pos) {
   } catch(e) { toast("❌ "+e.message); }
 }
 
+async function setSeasonRules(sid, rules) {
+  const go = async () => {
+    try {
+      await api(`/api/seasons/${sid}/rules`, {method:"PUT", body:JSON.stringify({rules})});
+      toast(rules === 2 ? "✅ Включены новые правила" : "✅ Включены старые правила");
+      [S.seasons, S.matches] = await Promise.all([api("/api/seasons"), api("/api/matches")]);
+      renderMatches(); renderCaptain(); loadRating(); loadBank();
+      if (activePage === "detail" && detailMatchId) renderDetail(detailMatchId);
+    } catch(e) { toast("❌ " + e.message); }
+  };
+  const msg = rules === 2 ? "Включить новые правила для этого сезона? Все матчи сезона пересчитаются." : "Вернуть старые правила для этого сезона? Все матчи сезона пересчитаются.";
+  if (tg) tg.showConfirm(msg, ok => { if (ok) go(); }); else if (confirm(msg)) go();
+}
+
 async function newSeason() {
   const name = document.getElementById("snm").value.trim();
   if (!name) { toast("Введи название сезона"); return; }
@@ -1201,6 +1253,7 @@ async function newSeason() {
 async function doNewSeason(name) {
   try {
     await api("/api/seasons",{method:"POST",body:JSON.stringify({name})});
+    lbRound = 0;
     toast("✅ Новый сезон начат");
     [S.seasons, S.matches] = await Promise.all([api("/api/seasons"), api("/api/matches")]);
     const s = S.seasons.find(x=>x.active)||S.seasons[0];
@@ -1218,7 +1271,7 @@ function togglePremInfo() {
 function initials(name){
   if(!name) return "?";
   const p = name.trim().split(/\s+/);
-  return p.length>=2 ? (p[0][0]+p[1][0]).toUpperCase() : name.slice(0,2).toUpperCase();
+  return esc(p.length>=2 ? (p[0][0]+p[1][0]).toUpperCase() : name.slice(0,2).toUpperCase());
 }
 let lpTeam = 1;
 let lpData = {1:{lineup:{},subs:{}}, 2:{lineup:{},subs:{}}};
@@ -1334,7 +1387,7 @@ function renderPitchTokens() {
       }
     }
     ce.className = "pt-c " + (pl ? (sl.keeper ? "gk" : "out") : "emp");
-    ce.textContent = pid ? initials(pl.name) : sl.abbr;
+    ce.innerHTML = pid ? initials(pl.name) : sl.abbr;
     ne.textContent = pl ? pl.name.split(" ")[0] : "—";
     if (sbe) {
       const subList = lpSubs[slot] || [];
@@ -1365,7 +1418,7 @@ function lineupHtml(m) {
     return `<div class="pt" id="lppt-${slot}" style="left:${sl.l};top:${sl.t}" ${click}>
       <div class="pt-c ${cls}" id="lpc-${slot}">${pid ? initials(pl.name) : sl.abbr}</div>
       <div class="sub-badges" id="lpsb-${slot}"></div>
-      <div class="pt-n" id="lpn-${slot}">${pl ? pl.name.split(" ")[0] : "—"}</div>
+      <div class="pt-n" id="lpn-${slot}">${pl ? esc(pl.name.split(" ")[0]) : "—"}</div>
     </div>`;
   }).join("");
   return `
@@ -1407,9 +1460,9 @@ function lineupHtml(m) {
 <div class="notes-blk">
   <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">📋 Заметки к игре</div>
   ${S.me.captain
-    ? `<textarea class="notes-ta" id="notesTA" rows="3" placeholder="Тактика, важные детали..." oninput="lpNotes=this.value">${lpNotes||""}</textarea>
+    ? `<textarea class="notes-ta" id="notesTA" rows="3" placeholder="Тактика, важные детали..." oninput="lpNotes=this.value">${esc(lpNotes)}</textarea>
        <button class="btn-primary" style="margin-top:8px;font-size:13px" onclick="saveNotes(${mid})">Сохранить заметки</button>`
-    : (lpNotes ? `<div class="notes-ro">${lpNotes}</div>` : `<div style="color:#555;font-size:13px">Заметок нет</div>`)
+    : (lpNotes ? `<div class="notes-ro" style="white-space:pre-wrap">${esc(lpNotes)}</div>` : `<div style="color:#555;font-size:13px">Заметок нет</div>`)
   }
 </div>`;
 }
@@ -1427,7 +1480,7 @@ function openPosInfo(slot, mid) {
     const avCls = sp ? (sp.position==="Вратарь" ? " filled kp" : " filled") : "";
     return `<div class="pi-sub-row">
       <div class="pi-sub-av${avCls}">${sp ? initials(sp.name) : "?"}</div>
-      <div style="font-size:13px;font-weight:600">${sp ? sp.name : "—"}</div>
+      <div style="font-size:13px;font-weight:600">${sp ? esc(sp.name) : "—"}</div>
       ${isCap ? `<div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <div style="font-size:12px;color:#4a9a40;cursor:pointer" onclick="openSubPick('${slot}',${i},${mid})">✎</div>
         <div style="font-size:12px;color:#ef4444;cursor:pointer" onclick="event.stopPropagation();clearSub('${slot}',${i},${mid})">✕</div>
@@ -1445,7 +1498,7 @@ function openPosInfo(slot, mid) {
   piSheet.innerHTML = `
     <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${sl.lbl}</div>
     <div class="pi-player">
-      ${pl ? `<div class="pi-av${sl.keeper?" kp":""}">${initials(pl.name)}</div><div><div style="font-size:15px;font-weight:800">${pl.name}</div><div style="font-size:12px;color:#888">${pl.position||"Нет позиции"}</div></div>`
+      ${pl ? `<div class="pi-av${sl.keeper?" kp":""}">${initials(pl.name)}</div><div><div style="font-size:15px;font-weight:800">${esc(pl.name)}</div><div style="font-size:12px;color:#888">${esc(pl.position)||"Нет позиции"}</div></div>`
             : `<div style="font-size:14px;color:#555">Игрок не назначен</div>`}
     </div>
     <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Замены</div>
@@ -1471,7 +1524,7 @@ function openSubPick(slot, subIdx, mid) {
     const note = inStart ? " (в старте)" : "";
     return `<div class="lp-row"${grayed?" style='opacity:.3;pointer-events:none'":""} onclick="assignSub(${pl.id})">
       <div class="lp-av${pl.position==="Вратарь"?" kp":""}">${initials(pl.name)}</div>
-      <div style="font-size:14px;font-weight:600">${pl.name}<span style="color:#666;font-size:11px">${note}</span></div>
+      <div style="font-size:14px;font-weight:600">${esc(pl.name)}<span style="color:#666;font-size:11px">${note}</span></div>
     </div>`;
   }).join("");
   document.getElementById("lpOverlay").classList.add("open");
@@ -1503,11 +1556,11 @@ function openLP(slot, mid) {
   document.getElementById("lpList").innerHTML = S.players.map(pl => {
     const taken = assigned.includes(pl.id) && lpLineup[slot] !== pl.id;
     const nm = pl.name.split(" ");
-    const initials = (nm[0]||"")[0] + ((nm[1]||"")[0]||"");
+    const initials = esc((nm[0]||"")[0] + ((nm[1]||"")[0]||""));
     return `<div class="lp-row"${taken?" style='opacity:.35;pointer-events:none'":""} onclick="assignLP(${pl.id})">
       <div class="lp-av${pl.position==="Вратарь"?" kp":""}">${initials}</div>
-      <div><div style="font-size:14px;font-weight:600">${pl.name}</div>
-           <div style="font-size:11px;color:#666">${pl.position||"—"}</div></div>
+      <div><div style="font-size:14px;font-weight:600">${esc(pl.name)}</div>
+           <div style="font-size:11px;color:#666">${esc(pl.position)||"—"}</div></div>
     </div>`;
   }).join("");
   document.getElementById("lpOverlay").classList.add("open");
