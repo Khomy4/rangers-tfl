@@ -14,7 +14,21 @@ button{cursor:pointer;font-family:inherit;border:none;outline:none}
 input,select,option{font-family:inherit;outline:none}
 
 /* Header */
-.hdr{padding:18px 16px 14px;background:#111;border-bottom:1px solid #1e1e1e}
+.hdr{padding:18px 16px 14px;background:#111;border-bottom:1px solid #1e1e1e;position:relative}
+.season-btn{display:inline-flex;align-items:center;gap:5px;border:none;cursor:pointer;font-family:inherit}
+.season-btn .chev{font-size:9px;opacity:.85;transition:transform .15s}
+.season-btn.open .chev{transform:rotate(180deg)}
+.season-btn:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
+.season-menu{display:none;position:absolute;right:16px;top:50px;z-index:600;min-width:190px;background:#1a1a1a;border:1px solid #2e2e2e;border-radius:12px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.season-menu.on{display:block}
+.season-menu .sm-lbl{font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.06em;padding:6px 10px 4px}
+.season-opt{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:10px;border:none;background:none;color:#eee;font-size:14px;font-weight:600;text-align:left;border-radius:8px;cursor:pointer;font-family:inherit}
+.season-opt:hover,.season-opt.on{background:#1e2d3a}
+.season-opt .so-tag{font-size:10px;font-weight:700;color:#22c55e}
+.season-opt .so-chk{color:#3b82f6;font-size:13px}
+.arch-bar{display:none;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;background:#1a1500;border-bottom:1px solid #3a2e00;font-size:12px;color:#f59e0b}
+.arch-bar.on{display:flex}
+.arch-bar button{border:1px solid #f59e0b;background:none;color:#f59e0b;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit}
 .hdr-row{display:flex;align-items:center;justify-content:space-between}
 .hdr-title{font-size:22px;font-weight:900;letter-spacing:-.5px}
 .hdr-badge{font-size:11px;font-weight:700;background:#1d4ed8;color:#fff;padding:3px 9px;border-radius:20px}
@@ -196,9 +210,14 @@ input,select,option{font-family:inherit;outline:none}
 <div class="hdr">
   <div class="hdr-row">
     <span class="hdr-title">🏆 Rangers</span>
-    <span class="hdr-badge" id="seasonBadge">Сезон 1</span>
+    <button class="hdr-badge season-btn" id="seasonBtn" onclick="toggleSeasonMenu(event)" aria-haspopup="true" aria-expanded="false" aria-label="Выбрать сезон"><span id="seasonBadge">Сезон 1</span><span class="chev">▼</span></button>
   </div>
   <div class="hdr-sub" id="hdrSub">Загрузка...</div>
+  <div class="season-menu" id="seasonMenu" role="menu"></div>
+</div>
+<div class="arch-bar" id="archBar">
+  <span id="archTxt">Архив — только просмотр</span>
+  <button onclick="exitArchive()">К текущему сезону</button>
 </div>
 
 <nav class="nav">
@@ -246,7 +265,7 @@ if (tg) { tg.ready(); tg.expand(); }
 const initData = tg?.initData || "";
 const H = {"Content-Type":"application/json","X-Telegram-Init-Data":initData};
 
-let S = { me:null, matches:[], players:[], seasons:[], lb:[], summary:null };
+let S = { me:null, matches:[], players:[], seasons:[], lb:[], summary:null, view:null, archMatches:[] };
 let activePage = "matches";
 let prevPage = "matches";
 let detailMatchId = null;
@@ -379,7 +398,69 @@ function dlBar(m) {
 }
 
 // Scoring rules of the active season: 1 = old, 2 = new (MVP only, defenders by score, top-3 x2)
-function isV2() { return ((S.seasons || []).find(x => x.active) || {}).rules >= 2; }
+// Season shown on screen: an archived one picked in the header menu, otherwise the active one
+function viewSeason() { return S.view || (S.seasons || []).find(x => x.active) || (S.seasons || [])[0] || {}; }
+function isV2() { return (viewSeason().rules || 1) >= 2; }
+const seasonQ = () => S.view ? `?season_id=${S.view.id}` : "";
+
+function toggleSeasonMenu(ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById("seasonMenu");
+  const btn = document.getElementById("seasonBtn");
+  const open = !menu.classList.contains("on");
+  if (open) {
+    const cur = viewSeason().id;
+    const list = [...(S.seasons || [])].sort((a, b) => b.id - a.id);
+    menu.innerHTML = `<div class="sm-lbl">Статистика сезона</div>` + list.map(x => `
+      <button class="season-opt${x.id===cur?" on":""}" role="menuitem" onclick="selectSeason(${x.id})">
+        <span>${esc(x.name)}${x.active ? ` <span class="so-tag">· текущий</span>` : ""}</span>
+        <span class="so-chk">${x.id===cur ? "✓" : ""}</span>
+      </button>`).join("");
+  }
+  menu.classList.toggle("on", open);
+  btn.classList.toggle("open", open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+function closeSeasonMenu() {
+  document.getElementById("seasonMenu")?.classList.remove("on");
+  const btn = document.getElementById("seasonBtn");
+  if (btn) { btn.classList.remove("open"); btn.setAttribute("aria-expanded", "false"); }
+}
+document.addEventListener("click", e => { if (!e.target.closest("#seasonMenu")) closeSeasonMenu(); });
+
+async function selectSeason(id) {
+  closeSeasonMenu();
+  const sel = (S.seasons || []).find(x => x.id === id);
+  if (!sel) return;
+  if (sel.active) { if (S.view) await exitArchive(); return; }
+  try {
+    S.archMatches = await api(`/api/matches?season_id=${id}`);
+  } catch(e) { toast("❌ " + e.message); return; }
+  if (!S.view) S._realCaptain = S.me.captain;
+  S.view = sel;
+  S.me.captain = false;                 // archive is read-only, even for the captain
+  document.getElementById("capNavBtn").style.display = "none";
+  document.getElementById("seasonBadge").textContent = sel.name;
+  document.getElementById("archTxt").textContent = `${sel.name} — архив, только просмотр`;
+  document.getElementById("archBar").classList.add("on");
+  lbRound = 0;
+  if (activePage === "captain" || activePage === "detail") goPage("matches");
+  renderMatches(); loadRating(); loadBank();
+}
+
+async function exitArchive() {
+  if (!S.view) return;
+  S.view = null; S.archMatches = [];
+  S.me.captain = !!S._realCaptain;
+  if (S.me.captain) document.getElementById("capNavBtn").style.display = "";
+  const s = (S.seasons || []).find(x => x.active) || S.seasons[0];
+  if (s) document.getElementById("seasonBadge").textContent = s.name;
+  document.getElementById("archBar").classList.remove("on");
+  lbRound = 0;
+  if (activePage === "detail") goPage("matches");
+  renderMatches(); loadRating(); loadBank();
+  if (S.me.captain) renderCaptain();
+}
 const POS_LABEL = {GK:"🧤 Вратарь", DEF:"🛡 Защитник", MID:"🔄 Полузащитник", FWD:"⚡ Нападающий"};
 const POS_FROM_PROFILE = {"Вратарь":"GK","Защитник":"DEF","Универсал":"MID","Нападающий":"FWD"};
 function multBadge(f) {
@@ -406,7 +487,7 @@ function matchCard(m) {
     ? `<span style="font-size:10px;font-weight:700;color:#e879f9;background:#2a0f2e;border:1px solid #e879f9;border-radius:4px;padding:1px 6px;margin-left:6px">⭐ ТОП-3</span>` : "";
   const bonusHtml = scored
     ? `<div class="mc-bonus">Бонус команды: <b>${rub(m.finance.team_bank)}</b> ${multBadge(m.finance)}</div>` : "";
-  const rsvpHtml = !scored && !m.deadline_passed
+  const rsvpHtml = !scored && !m.deadline_passed && !S.view
     ? `<div class="rsvp-row" onclick="event.stopPropagation()">
          <button class="btn-yes btn-sm" onclick="doRsvp(${m.id},'yes')">✅ Играю</button>
          <button class="btn-no btn-sm" onclick="doRsvp(${m.id},'no')">❌ Не играю</button>
@@ -429,12 +510,13 @@ function matchCard(m) {
 
 function renderMatches() {
   const el = document.getElementById("pg-matches");
-  if (!S.matches.length) {
+  const list = S.view ? S.archMatches : S.matches;
+  if (!list.length) {
     el.innerHTML=`<div class="empty"><div class="empty-ic">⚽</div><div class="empty-tx">Матчей пока нет</div></div>`;
     return;
   }
-  const playoff = S.matches.filter(m => m.phase === "playoff");
-  const season  = S.matches.filter(m => m.phase !== "playoff");
+  const playoff = list.filter(m => m.phase === "playoff");
+  const season  = list.filter(m => m.phase !== "playoff");
   let html = "";
   if (playoff.length) {
     html += `<div class="sect" style="color:#f59e0b">🏆 Плей-офф</div>` + playoff.map(matchCard).join("");
@@ -476,7 +558,7 @@ async function renderDetail(mid) {
     const myStats = m.stats.find(s=>s.player_id===S.me.player.id);
     const myPlayed = myStats?.played === 1;
     const isBoss = S.me.player.position === "Босс";
-    const canVote = scored && (myPlayed || isBoss) && !m.voting_closed && !m.voting_annulled && !m.voting_expired;
+    const canVote = scored && (myPlayed || isBoss) && !m.voting_closed && !m.voting_annulled && !m.voting_expired && !S.view;
     const playedPlayers = m.stats.filter(s=>s.played && s.player_id!==S.me.player.id);
     const voteOpts = playedPlayers.map(p=>`<option value="${p.player_id}">${esc(p.name)}</option>`).join("");
 
@@ -666,7 +748,10 @@ async function setLbRound(r) { lbRound = r; await loadRating(); }
 async function loadRating() {
   try {
     if (!(isV2() && S.summary?.r1_done)) lbRound = 0;
-    S.lb = await api("/api/leaderboard" + (lbRound ? `?round=${lbRound}` : ""));
+    const q = new URLSearchParams();
+    if (S.view) q.set("season_id", S.view.id);
+    if (lbRound) q.set("round", lbRound);
+    S.lb = await api("/api/leaderboard" + (q.toString() ? "?" + q : ""));
     renderRating();
   } catch(e) {}
 }
@@ -754,7 +839,7 @@ async function saveRemaining() {
 
 async function loadBank() {
   try {
-    S.summary = await api("/api/summary");
+    S.summary = await api("/api/summary" + seasonQ());
     renderBank();
     if (S.lb) renderRating();  // round tabs depend on summary
   } catch(e) {}
@@ -766,7 +851,7 @@ function renderBank() {
   const el = document.getElementById("pg-bank");
   el.innerHTML = `
 <div class="sect">Прогресс сезона</div>
-<div class="bank-grid">
+${S.view ? `<div class="bank-cell"><div class="bank-lbl">Сыграно матчей</div><div class="bank-val" style="color:#fff">${s.played}</div></div>` : `<div class="bank-grid">
   <div class="bank-cell"><div class="bank-lbl">Сыграно</div><div class="bank-val" style="color:#fff">${s.played} из ${s.total_games ?? 5}</div></div>
   <div class="bank-cell"><div class="bank-lbl">Осталось игр</div><div class="bank-val" style="color:#f59e0b">${s.remaining ?? Math.max(0, 5 - s.played)}</div></div>
 </div>
@@ -775,7 +860,7 @@ ${S.me?.captain ? `<div class="card-sm" style="display:flex;align-items:center;g
   <input id="remGames" type="number" min="0" max="200" inputmode="numeric" value="${s.remaining ?? 0}"
     style="width:64px;background:#111;border:1px solid #2e2e2e;color:#f0f0f0;border-radius:8px;padding:7px;font-size:15px;text-align:center">
   <button onclick="saveRemaining()" style="padding:8px 12px;background:#1e3a1e;border:1px solid #22c55e;border-radius:8px;color:#22c55e;font-size:13px;font-weight:700;cursor:pointer">Сохранить</button>
-</div>` : ""}
+</div>` : ""}`}
 ${s.rules>=2 ? round1Html(s) : ""}
 <div class="sect">Заработали вместе</div>
 <div class="bank-grid">
