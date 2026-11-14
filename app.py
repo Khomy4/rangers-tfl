@@ -328,14 +328,16 @@ def player_points_v2(m: dict, st: dict, profile_pos: str, is_mvp: bool) -> dict:
         return {"points": 0, "pos": pos, "result_pts": 0, "pos_pts": 0, "mult": 1.0}
     result_pts = pos_pts = 0
     if gf is not None and ga is not None:
-        result_pts = 2 if gf > ga else 1 if gf == ga else 0
+        result_pts = 1 if gf > ga else 0
         if pos == "GK":
             pos_pts = 3 if ga == 0 else 1 if ga <= 2 else 0
         elif pos == "DEF":
-            pos_pts = (2 if ga == 0 else 1 if ga == 1 else 0) + min(max(gf - ga, 0), 3)
-    base = (st.get("goals") or 0) + (st.get("assists") or 0) + (3 if is_mvp else 0) + result_pts + pos_pts
+            pos_pts = 2 if ga == 0 else 1 if ga == 1 else 0
+    g = st.get("goals") or 0
+    goal_pts = min(g, 2) * 2 + max(g - 2, 0)   # first two goals +2 each, every next +1
+    base = goal_pts + (st.get("assists") or 0) + (3 if is_mvp else 0) + result_pts + pos_pts
     mult = match_mult(m, 2)
-    return {"points": po_round(base * mult) - card_pen, "pos": pos,
+    return {"points": po_round(base * mult) - card_pen, "pos": pos, "goal_pts": goal_pts,
             "result_pts": result_pts, "pos_pts": pos_pts, "mult": mult}
 
 
@@ -480,9 +482,6 @@ class RemainingGamesIn(BaseModel):
 class SeasonIn(BaseModel):
     name: str
 
-class RulesIn(BaseModel):
-    rules: int
-
 class Round1In(BaseModel):
     top3: Optional[bool] = None
     undo: bool = False
@@ -623,19 +622,6 @@ def set_remaining_games(sid: int, x: RemainingGamesIn, request: Request):
     return {"ok": True, "total_games": played + x.remaining}
 
 
-@app.put("/api/seasons/{sid}/rules")
-def set_season_rules(sid: int, x: RulesIn, request: Request):
-    """Captain switches a season between old (1) and new (2) scoring rules."""
-    p = get_player(request)
-    if not is_captain(p):
-        raise HTTPException(403)
-    if x.rules not in (1, 2):
-        raise HTTPException(400, "Неизвестные правила")
-    with db() as c:
-        c.execute("UPDATE seasons SET rules=? WHERE id=?", (x.rules, sid))
-    return {"ok": True}
-
-
 @app.post("/api/seasons/{sid}/round1")
 def finish_round1(sid: int, x: Round1In, request: Request):
     """Captain closes the first round (top3 = whether we are in the league top-3), or undoes it."""
@@ -771,6 +757,7 @@ def match_detail(mid: int, request: Request):
                     "is_mvp": is_mvp,
                     "is_best_defense": False,
                     "result_pts": pp["result_pts"],
+                    "goal_pts": pp["goal_pts"],
                     "pos_pts": pp["pos_pts"],
                     "points": pp["points"],
                 })

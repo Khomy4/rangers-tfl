@@ -617,7 +617,7 @@ ${scored && m.stats.length ? `
         ${s.goals>0?`<span class="chip chip-green">⚽${s.goals}</span>`:""}
         ${s.assists>0?`<span class="chip chip-blue">🎯${s.assists}</span>`:""}
         ${m.rules>=2 ? `
-          ${s.result_pts?`<span class="chip chip-gray">${s.result_pts===2?"🏆 победа +2":"🤝 ничья +1"}</span>`:""}
+          ${s.result_pts?`<span class="chip chip-gray">🏆 победа +${s.result_pts}</span>`:""}
           ${s.pos_pts?`<span class="chip chip-gray">${s.match_pos==="GK"?"🧤":"🛡"} +${s.pos_pts}</span>`:""}
         ` : `
           ${s.keeper_points===3?`<span class="chip chip-gray">🧤сухарь</span>`:""}
@@ -881,33 +881,45 @@ const PREM_INFO = `
 <div class="card">
   <div style="font-size:15px;font-weight:800;margin-bottom:14px">💰 Как мы зарабатываем</div>
 
-  <div style="font-size:13px;font-weight:800;color:#22c55e;margin-bottom:8px">🏦 Командный банк</div>
+  <div style="font-size:13px;font-weight:800;margin-bottom:8px;color:#22c55e">🏦 Командный банк</div>
   <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">✅ Дисциплина — 300 ₽</div>
   <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Все вовремя ответили «Играю / Не играю» и никто не пропал без предупреждения.</div>
   <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🏆 Результат матча</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Ничья — 200 ₽ &nbsp;·&nbsp; Победа — 500 ₽ &nbsp;·&nbsp; Победа в 3+ мяча — 600 ₽</div>
-  <div style="font-size:11px;color:#555;margin:-6px 0 14px;line-height:1.5">Банк тратим вместе по решению команды после турнира.</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Ничья — 200 ₽ &nbsp;·&nbsp; Победа — 500 ₽ &nbsp;·&nbsp; Победа в 3+ мяча — 600 ₽<br>Поражение — 0 ₽</div>
+  <div style="font-size:11px;color:#555;margin:-6px 0 16px;line-height:1.5">Банк тратим вместе по решению команды после турнира.</div>
 
-  <div style="font-size:13px;font-weight:800;color:#3b82f6;margin-bottom:8px">💵 Личный призовой фонд</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">600 ₽ с каждого сыгранного матча. Делится между игроками по очкам рейтинга.</div>
+  <div style="font-size:13px;font-weight:800;margin-bottom:8px;color:#3b82f6">💵 Личный призовой фонд</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">600 ₽ с каждого сыгранного матча. Делится между игроками по очкам рейтинга — чем больше очков, тем больше доля.</div>
   <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">📅 Выплата после первого круга</div>
   <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">
-    Если после первого круга мы в топ-3 таблицы — фонд первого круга выплачивается сразу: по очкам первого круга тем, кто сыграл хотя бы половину матчей круга.<br>
+    Если после первого круга мы в топ-3 таблицы лиги — фонд первого круга выплачивается сразу: по очкам первого круга, тем, кто сыграл хотя бы половину матчей круга.<br>
     Если не в топ-3 — фонд не выплачивается и копится до конца турнира.
   </div>
 
-  <div style="font-size:13px;font-weight:800;color:#e879f9;margin-bottom:8px">⭐ Матчи с топ-3 соперниками</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Победа над командой из топ-3 — всё за матч ×2: командные призовые, личный фонд и личные очки каждого игрока.</div>
+  <div style="font-size:13px;font-weight:800;margin-bottom:8px;color:#e879f9">⭐ Матчи с топ-3 соперниками</div>
+  <div style="font-size:12px;color:#888;margin-bottom:16px;line-height:1.7">Победа над командой из топ-3 — всё за матч ×2: командные призовые, личный фонд и личные очки каждого игрока. Ничья и поражение считаются как обычно.</div>
 
-  <div style="font-size:13px;font-weight:800;color:#f0f0f0;margin-bottom:8px">📊 Личные очки</div>
-  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">Всем, кто играл</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">⚽ Гол +1 &nbsp;·&nbsp; 🎯 Ассист +1 &nbsp;·&nbsp; 🏅 MVP +3<br>🏆 Победа +2 &nbsp;·&nbsp; 🤝 Ничья +1</div>
+  <div style="font-size:13px;font-weight:800;margin-bottom:8px;color:#f0f0f0">📊 Личные очки</div>
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">⚽ Голы</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">1-й и 2-й гол в матче — по +2<br>3-й, 4-й и каждый следующий — по +1<br><span style="color:#555">Например, хет-трик = 2 + 2 + 1 = 5 очков</span></div>
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">Остальное — всем, кто играл</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">🎯 Ассист +1 &nbsp;·&nbsp; 🏅 MVP матча +3 &nbsp;·&nbsp; 🏆 Победа +1</div>
   <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🛡 Защитникам</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Сухой матч +2 &nbsp;·&nbsp; Пропустили 1 мяч +1<br>+1 за каждый мяч разницы в счёте при победе (максимум +3)</div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Сухой матч +2 &nbsp;·&nbsp; Пропустили 1 мяч +1</div>
   <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">🧤 Вратарю</div>
   <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">Сухой матч +3 &nbsp;·&nbsp; Пропустил 1–2 мяча +1</div>
   <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">Штрафы</div>
-  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">🟡 Жёлтая −1 &nbsp;·&nbsp; 🔴 Красная −3 &nbsp;<span style="color:#555">(не умножаются)</span></div>
+  <div style="font-size:12px;color:#888;margin-bottom:12px;line-height:1.7">🟡 Жёлтая −1 &nbsp;·&nbsp; 🔴 Красная −3 <span style="color:#555">(не умножаются)</span></div>
+
+  <div style="font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:5px">Примеры</div>
+  <div style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #222;font-size:12px;color:#aaa"><span>Победа 6:0, нападающий забил 4</span><b style="color:#eee">2+2+1+1 + 1 = 7</b></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #222;font-size:12px;color:#aaa"><span>Победа 6:0, защитник без голов</span><b style="color:#eee">2 + 1 = 3</b></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #222;font-size:12px;color:#aaa"><span>Победа 6:0, вратарь</span><b style="color:#eee">3 + 1 = 4</b></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #222;font-size:12px;color:#aaa"><span>Победа 1:0 у топ-3, автор гола</span><b style="color:#eee">(2 + 1) ×2 = 6</b></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #222;font-size:12px;color:#aaa" ><span>Поражение 2:3, забил 2</span><b style="color:#eee">2 + 2 = 4</b></div>
+  </div>
+
   <div style="font-size:11px;color:#555;line-height:1.6">
     Позицию каждого игрока в матче отмечает капитан.<br>
     MVP выбирает команда голосованием после матча. За себя голосовать нельзя.
@@ -1087,18 +1099,6 @@ ${pending.map(pl=>`
 <div class="card-sm" style="font-size:11px;color:#555;line-height:1.6;text-align:center">
   👑 «Босс» — игрок скрыт от всей командной статистики
 </div>
-
-${(() => {
-  const cs = S.seasons.find(x => x.active) || S.seasons[0];
-  if (!cs) return "";
-  const v2 = (cs.rules || 1) >= 2;
-  const btn = (val, label, on) => `<button onclick="setSeasonRules(${cs.id},${val})" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:2px solid ${on?"#22c55e":"#333"};background:${on?"#1e3a1e":"#1a1a1a"};color:${on?"#22c55e":"#666"}">${label}</button>`;
-  return `<div class="sect">Правила сезона</div>
-<div class="card">
-  <div style="font-size:12px;color:#888;margin-bottom:10px;line-height:1.5">${esc(cs.name)}: сейчас <b style="color:${v2?"#22c55e":"#f59e0b"}">${v2?"новые правила":"старые правила"}</b>. Очки и призовые всех матчей сезона пересчитываются сразу.</div>
-  <div style="display:flex;gap:8px">${btn(2,"Новые правила",v2)}${btn(1,"Старые правила",!v2)}</div>
-</div>`;
-})()}
 
 <div class="sect">Новый сезон</div>
 <div class="card">
@@ -1309,20 +1309,6 @@ async function setPos(pid, pos) {
     S.players = await api("/api/players");
     renderCaptain(); // Re-render so Босс badge appears/disappears immediately
   } catch(e) { toast("❌ "+e.message); }
-}
-
-async function setSeasonRules(sid, rules) {
-  const go = async () => {
-    try {
-      await api(`/api/seasons/${sid}/rules`, {method:"PUT", body:JSON.stringify({rules})});
-      toast(rules === 2 ? "✅ Включены новые правила" : "✅ Включены старые правила");
-      [S.seasons, S.matches] = await Promise.all([api("/api/seasons"), api("/api/matches")]);
-      renderMatches(); renderCaptain(); loadRating(); loadBank();
-      if (activePage === "detail" && detailMatchId) renderDetail(detailMatchId);
-    } catch(e) { toast("❌ " + e.message); }
-  };
-  const msg = rules === 2 ? "Включить новые правила для этого сезона? Все матчи сезона пересчитаются." : "Вернуть старые правила для этого сезона? Все матчи сезона пересчитаются.";
-  if (tg) tg.showConfirm(msg, ok => { if (ok) go(); }); else if (confirm(msg)) go();
 }
 
 async function newSeason() {
