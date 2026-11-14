@@ -153,6 +153,21 @@ def init():
         # Scoring rules version: 1 = old (seasons before Nov 2026), 2 = new rules
         c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS rules INTEGER DEFAULT 1")
         c.execute("ALTER TABLE seasons ALTER COLUMN rules SET DEFAULT 2")
+        # One-time data migrations: each runs once ever, recorded in app_migrations,
+        # so a later manual change (e.g. the captain's rules switch) is never overwritten on restart.
+        c.execute("CREATE TABLE IF NOT EXISTS app_migrations(name TEXT PRIMARY KEY, applied_at TEXT)")
+        c.execute(
+            "INSERT INTO app_migrations(name, applied_at) VALUES('active_season_new_rules', %s) "
+            "ON CONFLICT(name) DO NOTHING RETURNING name",
+            (datetime.utcnow().isoformat(),)
+        )
+        if c.fetchone():
+            # The current season was created by the old app version before the new rules shipped:
+            # switch it to the new rules. The very first season keeps the old rules.
+            c.execute(
+                "UPDATE seasons SET rules=2 WHERE active=1 AND rules=1 "
+                "AND id > (SELECT MIN(id) FROM seasons)"
+            )
         c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS r1_done INTEGER DEFAULT 0")
         c.execute("ALTER TABLE seasons ADD COLUMN IF NOT EXISTS r1_top3 INTEGER DEFAULT NULL")
         c.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS is_top INTEGER DEFAULT 0")
